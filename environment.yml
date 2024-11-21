@@ -1,0 +1,19 @@
+name: ml_experiments
+channels:
+  - conda-forge
+dependencies:
+  - numpy
+  - scikit-learn
+  - mlflow
+  - postgresql
+  - psycopg2
+  - pytest
+  - ipykernel
+  - ipywidgets
+  - dask
+  - distributed
+  - dask-jobqueue
+  - tqdm
+  - pip
+  - pip:
+    - -e .

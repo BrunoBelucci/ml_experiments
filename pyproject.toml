@@ -1,0 +1,58 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "ml_experiments"
+version = "0.1"
+description = """ml_experiments"""
+readme = "README.md"
+license = "MIT"
+authors = [
+  { name = "Bruno Belucci", email = "bruno.belucci-teixeira@dauphine.eu" },
+]
+maintainers = [
+  { name = "Bruno Belucci", email = "bruno.belucci-teixeira@dauphine.eu" },
+]
+keywords = [
+    "machine learning",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: GPU :: NVIDIA CUDA",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Education",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: Unix",
+    "Programming Language :: Python :: 3",
+]
+dependencies = [
+    "numpy",
+    "scikit-learn",
+    "mlflow",
+    "ipykernel",
+    "ipywidgets",
+    "dask",
+    "distributed",
+    "dask-jobqueue",
+    "tqdm"
+]
+
+[project.urls]
+"Source code" = "https://github.com/BrunoBelucci/ml_experiments"
+
+[project.optional-dependencies]
+test = [
+  "pytest",
+]
+docs = [
+  "sphinx",
+  "sphinx-rtd-theme",
+]
+all = [
+    "ml_experiments[test]",
+    "ml_experiments[docs]",
+]
+
+
