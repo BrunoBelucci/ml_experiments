@@ -36,7 +36,10 @@ dependencies = [
     "dask",
     "distributed",
     "dask-jobqueue",
-    "tqdm"
+    "tqdm",
+    "openml",
+    "optuna",
+    "optuna-integration"
 ]
 
 [project.urls]
