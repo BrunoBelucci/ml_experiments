@@ -160,7 +160,7 @@ class HPOExperiment(BaseExperiment, ABC):
                                                         reduction_factor=reduction_factor)
             elif self.pruner == 'sha':
                 pruner = optuna.pruners.SuccessiveHalvingPruner(min_resource=10)
-            elif self.pruner is None:
+            elif self.pruner is None or (self.pruner).lower() == 'none':
                 pruner = None
             else:
                 raise NotImplementedError(f'Pruner {self.pruner} not implemented for optuna')
