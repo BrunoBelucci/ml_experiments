@@ -18,7 +18,7 @@ class HPOExperiment(BaseExperiment, ABC):
                  # general
                  n_trials=30, timeout_experiment=10 * 60 * 60, timeout_trial=2 * 60 * 60, max_concurrent_trials=1,
                  # optuna
-                 sampler='tpe', pruner='hyperband',
+                 sampler='tpe', pruner='hyperband', direction='minimize',
                  **kwargs):
         """HPO experiment.
 
@@ -101,6 +101,7 @@ class HPOExperiment(BaseExperiment, ABC):
         # optuna
         self.sampler = sampler
         self.pruner = pruner
+        self.direction = direction
         self.log_dir_dask = None
 
     def _add_arguments_to_parser(self):
@@ -114,6 +115,7 @@ class HPOExperiment(BaseExperiment, ABC):
         # optuna
         self.parser.add_argument('--sampler', type=str, default=self.sampler)
         self.parser.add_argument('--pruner', type=str, default=self.pruner)
+        self.parser.add_argument('--direction', type=str, default=self.direction)
 
     def _unpack_parser(self):
         args = super()._unpack_parser()
@@ -126,6 +128,7 @@ class HPOExperiment(BaseExperiment, ABC):
         # optuna
         self.sampler = args.sampler
         self.pruner = args.pruner
+        self.direction = args.direction
 
     @abstractmethod
     def get_hyperband_max_resources(self, combination: dict, unique_params: Optional[dict] = None,
@@ -174,7 +177,7 @@ class HPOExperiment(BaseExperiment, ABC):
                 storage = None
             results['storage'] = storage
 
-            study = optuna.create_study(storage=storage, sampler=sampler, pruner=pruner, direction='minimize')
+            study = optuna.create_study(storage=storage, sampler=sampler, pruner=pruner, direction=self.direction)
             results['study'] = study
         else:
             raise NotImplementedError(f'HPO framework {self.hpo_framework} not implemented')
@@ -356,7 +359,8 @@ class HPOExperiment(BaseExperiment, ABC):
         unique_params.update(dict(hpo_framework=self.hpo_framework, n_trials=self.n_trials,
                                   timeout_experiment=self.timeout_experiment, timeout_trial=self.timeout_trial,
                                   max_concurrent_trials=self.max_concurrent_trials, sampler=self.sampler,
-                                  pruner=self.pruner, create_validation_set=self.create_validation_set))
+                                  pruner=self.pruner, create_validation_set=self.create_validation_set,
+                                  direction=self.direction))
         if not self.create_validation_set:
             warn('HPOExperiment usually requires a validation set, are you sure you did not forgot set'
                  ' create_validation_set=True or pass --create_validation_set')
