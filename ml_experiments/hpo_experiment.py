@@ -10,7 +10,39 @@ import mlflow
 from warnings import warn
 from mlflow.utils.mlflow_tags import MLFLOW_PARENT_RUN_ID
 from ml_experiments.base_experiment import BaseExperiment
+from sklearn.utils import check_random_state
 from tqdm.auto import tqdm
+import numpy as np
+
+
+def discretize_search_space(search_space):
+    discretized_search_space = {}
+    for param_name, optuna_distribution in search_space.items():
+        if isinstance(optuna_distribution, optuna.distributions.BaseDistribution):
+            if isinstance(optuna_distribution, optuna.distributions.CategoricalDistribution):
+                discretized_search_space[param_name] = optuna_distribution.choices
+            else:
+                if isinstance(optuna_distribution, optuna.distributions.IntDistribution):
+                    dtype = np.int64
+                elif isinstance(optuna_distribution, optuna.distributions.FloatDistribution):
+                    dtype = np.float64
+                low = optuna_distribution.low
+                high = optuna_distribution.high
+                step = optuna_distribution.step
+                log = optuna_distribution.log
+                if not log:
+                    n_samples = floor((high - low) / step) + 1
+                    # use linspace instead of arange to avoid floating point errors as mentioned in
+                    # https://numpy.org/doc/stable/reference/generated/numpy.arange.html
+                    discretized_search_space[param_name] = np.linspace(low, high, n_samples, dtype=dtype,
+                                                                       endpoint=True).tolist()
+                else:
+                    n_samples = floor(np.log(high / low) / np.log(step)) + 1
+                    discretized_search_space[param_name] = np.logspace(np.log10(low), np.log10(high), n_samples,
+                                                                       dtype=dtype, endpoint=True).tolist()
+        else:
+            pass
+    return discretized_search_space
 
 
 class HPOExperiment(BaseExperiment, ABC):
@@ -149,6 +181,10 @@ class HPOExperiment(BaseExperiment, ABC):
                 sampler = optuna.samplers.TPESampler(multivariate=True, constant_liar=True, seed=seed_model)
             elif self.sampler == 'random':
                 sampler = optuna.samplers.RandomSampler(seed=seed_model)
+            elif self.sampler == 'grid':
+                search_space, default_values = model_cls.create_search_space()
+                search_space = discretize_search_space(search_space)
+                sampler = optuna.samplers.GridSampler(search_space=search_space, seed=seed_model)
             else:
                 raise NotImplementedError(f'Sampler {self.sampler} not implemented for optuna')
             results['sampler'] = sampler
@@ -196,10 +232,12 @@ class HPOExperiment(BaseExperiment, ABC):
                                                      extra_params=extra_params,
                                                      return_results=True)
         # we do not need to keep all the results (data, model...), only the evaluation results
-        keep_results = {'evaluate_model_return': results['evaluate_model_return']}
+        child_run_id = trial_combination.get('mlflow_run_id', None)
+        keep_results = {'evaluate_model_return': results['evaluate_model_return'], 'child_run_id': child_run_id}
         return keep_results
 
-    def _get_optuna_params(self, search_space, study, model_params, fit_params, combination, child_run_id):
+    def _get_optuna_params(self, search_space, study, model_params, fit_params, combination, child_run_id,
+                           random_state):
         optuna_distributions_search_space = {}
         conditional_distributions_search_space = {}
         for name, value in search_space.items():
@@ -212,7 +250,7 @@ class HPOExperiment(BaseExperiment, ABC):
                               in conditional_distributions_search_space.items()}
         trial_model_params = trial.params
         trial_model_params.update(model_params.copy())
-        trial_seed_model = trial_model_params.pop('seed_model')
+        trial_seed_model = random_state.randint(0, 10000)
         trial_combination = combination.copy()
         trial_combination.pop('model_params')
         trial_combination.pop('seed_model')
@@ -248,25 +286,34 @@ class HPOExperiment(BaseExperiment, ABC):
         if self.hpo_framework == 'optuna':
             study = kwargs['load_model_return']['study']
             storage = kwargs['load_model_return']['storage']
+            sampler = kwargs['load_model_return']['sampler']
+
+            if isinstance(sampler, optuna.samplers.GridSampler):
+                # we will ignore n_trials and run every trial defined in the search_space
+                search_space = sampler._search_space
+                n_samples_params = [len(value) for value in search_space.values()]
+                n_trials = np.prod(n_samples_params)
+            else:
+                n_trials = self.n_trials
+
 
             # objective and search space (distribution)
             search_space, default_values = model_cls.create_search_space()
-            search_space['seed_model'] = optuna.distributions.IntUniformDistribution(0, 10000)
-            default_values['seed_model'] = seed_model
+            random_state = check_random_state(seed_model)
             if mlflow_run_id is not None:
                 parent_run_id = mlflow_run_id
                 parent_run = mlflow.get_run(parent_run_id)
                 child_runs = parent_run.data.tags
                 child_runs_ids = [child_run_id for key, child_run_id in child_runs.items()
                                   if key.startswith('child_run_id_')]
-                if not child_runs_ids:  # runs were not created before, so we create them now
+                if len(child_runs_ids) < n_trials:  # runs were not created before, so we create them now
                     mlflow_client = mlflow.client.MlflowClient(tracking_uri=self.mlflow_tracking_uri)
                     experiment_id = mlflow_client.get_experiment_by_name(self.experiment_name).experiment_id
-                    child_runs_ids = []
-                    for trial in range(self.n_trials):
+                    for trial in range(len(child_runs_ids) + 1, n_trials + 1):
                         run = mlflow_client.create_run(experiment_id, tags={MLFLOW_PARENT_RUN_ID: parent_run_id})
                         run_id = run.info.run_id
                         mlflow_client.set_tag(parent_run_id, f'child_run_id_{trial}', run_id)
+                        mlflow_client.set_tag(run_id, 'parent_run_id', parent_run_id)
                         mlflow_client.update_run(run_id, status='SCHEDULED')
                         child_runs_ids.append(run_id)
             else:
@@ -280,8 +327,8 @@ class HPOExperiment(BaseExperiment, ABC):
             n_trial = 0
             first_trial = True
             start_time = time.perf_counter()
-            pbar = tqdm(total=self.n_trials, desc='Trials')
-            while n_trial < self.n_trials:
+            pbar = tqdm(total=n_trials, desc='Trials')
+            while n_trial < n_trials:
                 if self.dask_cluster_type is not None:
                     with worker_client() as client:
                         futures = []
@@ -289,7 +336,7 @@ class HPOExperiment(BaseExperiment, ABC):
                         for _ in range(self.max_concurrent_trials):
                             child_run_id = child_runs_ids[n_trial]
                             trial, trial_combination, trial_key = self._get_optuna_params(
-                                search_space, study, model_params, fit_params, combination, child_run_id
+                                search_space, study, model_params, fit_params, combination, child_run_id, random_state
                             )
                             trial_numbers.append(trial.number)
                             resources = {'cores': self.n_jobs, 'gpus': self.n_gpus / (self.n_cores / self.n_jobs)}
@@ -313,6 +360,8 @@ class HPOExperiment(BaseExperiment, ABC):
                     for trial_number, result in zip(trial_numbers, results):
                         study_id = storage.get_study_id_from_name(study.study_name)
                         trial_id = storage.get_trial_id_from_study_id_trial_number(study_id, trial_number)
+                        child_run_id = result['child_run_id']
+                        storage.set_trial_user_attr(trial_id, 'child_run_id', child_run_id)
                         eval_result = result['evaluate_model_return']
                         for metric, value in eval_result.items():
                             storage.set_trial_user_attr(trial_id, metric, value)
@@ -327,11 +376,13 @@ class HPOExperiment(BaseExperiment, ABC):
                 else:
                     child_run_id = child_runs_ids[n_trial]
                     trial, trial_combination, _ = self._get_optuna_params(
-                        search_space, study, model_params, fit_params, combination, child_run_id
+                        search_space, study, model_params, fit_params, combination, child_run_id, random_state
                     )
                     result = self._training_fn(single_experiment=single_experiment, trial_combination=trial_combination,
                                                optuna_trial=trial, unique_params=unique_params,
                                                extra_params=extra_params, **kwargs)
+                    child_run_id = result['child_run_id']
+                    trial.set_user_attr('child_run_id', child_run_id)
                     eval_result = result['evaluate_model_return']
                     for metric, value in eval_result.items():
                         trial.set_user_attr(metric, value)
@@ -357,14 +408,14 @@ class HPOExperiment(BaseExperiment, ABC):
 
         best_trial = study.best_trial
         best_metric_results = {f'best_{metric}': value for metric, value in best_trial.user_attrs.items()
-                               if not metric.startswith('elapsed_')}
+                               if not metric.startswith('elapsed_') and not metric.startswith('child_run_id')}
 
         mlflow_run_id = extra_params.get('mlflow_run_id', None)
         if mlflow_run_id is not None:
-            best_model_params_and_seed = best_trial.params.copy()
-            best_model_params_and_seed['seed_best_model'] = best_model_params_and_seed.pop('seed_model')
+            best_model_params = best_trial.params.copy()
+            best_model_params['best_child_run_id'] = best_trial.user_attrs.get('child_run_id', None)
             mlflow_client = mlflow.client.MlflowClient(tracking_uri=self.mlflow_tracking_uri)
-            for tag, value in best_model_params_and_seed.items():
+            for tag, value in best_model_params.items():
                 mlflow_client.set_tag(mlflow_run_id, tag, value)
 
         return best_metric_results
@@ -392,6 +443,7 @@ class HPOExperiment(BaseExperiment, ABC):
             run = mlflow_client.create_run(experiment_id, tags={MLFLOW_PARENT_RUN_ID: parent_run_id})
             run_id = run.info.run_id
             mlflow_client.set_tag(parent_run_id, f'child_run_id_{trial}', run_id)
+            mlflow_client.set_tag(run_id, 'parent_run_id', parent_run_id)
             mlflow_client.update_run(run_id, status='SCHEDULED')
         return parent_run_id
 
