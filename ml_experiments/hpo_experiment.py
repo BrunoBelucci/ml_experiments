@@ -10,6 +10,7 @@ import mlflow
 from warnings import warn
 from mlflow.utils.mlflow_tags import MLFLOW_PARENT_RUN_ID
 from ml_experiments.base_experiment import BaseExperiment
+from tqdm.auto import tqdm
 
 
 class HPOExperiment(BaseExperiment, ABC):
@@ -258,6 +259,16 @@ class HPOExperiment(BaseExperiment, ABC):
                 child_runs = parent_run.data.tags
                 child_runs_ids = [child_run_id for key, child_run_id in child_runs.items()
                                   if key.startswith('child_run_id_')]
+                if not child_runs_ids:  # runs were not created before, so we create them now
+                    mlflow_client = mlflow.client.MlflowClient(tracking_uri=self.mlflow_tracking_uri)
+                    experiment_id = mlflow_client.get_experiment_by_name(self.experiment_name).experiment_id
+                    child_runs_ids = []
+                    for trial in range(self.n_trials):
+                        run = mlflow_client.create_run(experiment_id, tags={MLFLOW_PARENT_RUN_ID: parent_run_id})
+                        run_id = run.info.run_id
+                        mlflow_client.set_tag(parent_run_id, f'child_run_id_{trial}', run_id)
+                        mlflow_client.update_run(run_id, status='SCHEDULED')
+                        child_runs_ids.append(run_id)
             else:
                 parent_run_id = None
                 child_runs_ids = [None for _ in range(self.n_trials)]
@@ -269,6 +280,7 @@ class HPOExperiment(BaseExperiment, ABC):
             n_trial = 0
             first_trial = True
             start_time = time.perf_counter()
+            pbar = tqdm(total=self.n_trials, desc='Trials')
             while n_trial < self.n_trials:
                 if self.dask_cluster_type is not None:
                     with worker_client() as client:
@@ -305,9 +317,10 @@ class HPOExperiment(BaseExperiment, ABC):
                         for metric, value in eval_result.items():
                             storage.set_trial_user_attr(trial_id, metric, value)
                         study.tell(trial_number, self._get_tell_metric_from_results(result))
+                        pbar.update(1)
                         if parent_run_id:
                             eval_result.pop('elapsed_time', None)
-                            mlflow.log_metrics(eval_result, run_id=parent_run_id)
+                            mlflow.log_metrics(eval_result, run_id=parent_run_id, step=trial_number)
                     elapsed_time = time.perf_counter() - start_time
                     if elapsed_time > self.timeout_experiment:
                         break
@@ -323,14 +336,16 @@ class HPOExperiment(BaseExperiment, ABC):
                     for metric, value in eval_result.items():
                         trial.set_user_attr(metric, value)
                     study.tell(trial, self._get_tell_metric_from_results(result))
+                    pbar.update(1)
                     if parent_run_id:
                         eval_result.pop('elapsed_time', None)
-                        mlflow.log_metrics(eval_result, run_id=parent_run_id)
+                        mlflow.log_metrics(eval_result, run_id=parent_run_id, step=trial.number)
                     n_trial += 1
                     elapsed_time = time.perf_counter() - start_time
                     if elapsed_time > self.timeout_experiment:
                         break
 
+            pbar.close()
             return {}
 
         else:
