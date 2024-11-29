@@ -319,7 +319,9 @@ class HPOExperiment(BaseExperiment, ABC):
             else:
                 parent_run_id = None
                 child_runs_ids = [None for _ in range(self.n_trials)]
-            study.enqueue_trial(default_values)
+
+            if not isinstance(sampler, optuna.samplers.GridSampler):
+                study.enqueue_trial(default_values)
 
             # we will run several experiments
             single_experiment = self._load_single_experiment(combination, unique_params=unique_params,
@@ -365,7 +367,10 @@ class HPOExperiment(BaseExperiment, ABC):
                         eval_result = result['evaluate_model_return']
                         for metric, value in eval_result.items():
                             storage.set_trial_user_attr(trial_id, metric, value)
-                        study.tell(trial_number, self._get_tell_metric_from_results(result))
+                        try:
+                            study.tell(trial_number, self._get_tell_metric_from_results(result))
+                        except RuntimeError:  # handle stop of grid search
+                            pass
                         pbar.update(1)
                         if parent_run_id:
                             eval_result.pop('elapsed_time', None)
@@ -386,7 +391,10 @@ class HPOExperiment(BaseExperiment, ABC):
                     eval_result = result['evaluate_model_return']
                     for metric, value in eval_result.items():
                         trial.set_user_attr(metric, value)
-                    study.tell(trial, self._get_tell_metric_from_results(result))
+                    try:
+                        study.tell(trial, self._get_tell_metric_from_results(result))
+                    except RuntimeError:  # handle stop of grid search
+                        pass
                     pbar.update(1)
                     if parent_run_id:
                         eval_result.pop('elapsed_time', None)
