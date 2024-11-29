@@ -15,6 +15,12 @@ def generate_postgres_db_script(
         error_job_file=None,
         wall_time='364-23:59:59',
 ):
+    if isinstance(file_dir, str):
+        file_dir = Path(file_dir)
+    os.makedirs(file_dir, exist_ok=True)
+    if isinstance(database_root_dir, str):
+        database_root_dir = Path(database_root_dir)
+    database_dir = database_root_dir / (db_name + '_db')
     job_name = f'{db_name}_db'
     if output_job_file is None:
         output_job_dir = database_root_dir / 'sbatch_outputs'
@@ -24,12 +30,6 @@ def generate_postgres_db_script(
         error_job_dir = database_root_dir / 'sbatch_errors'
         os.makedirs(error_job_dir, exist_ok=True)
         error_job_file = str(error_job_dir / '%x.%J.err')
-    if isinstance(file_dir, str):
-        file_dir = Path(file_dir)
-    os.makedirs(file_dir, exist_ok=True)
-    if isinstance(database_root_dir, str):
-        database_root_dir = Path(database_root_dir)
-    database_dir = database_root_dir / (db_name + '_db')
     log_file = database_dir / (db_name + '.log')
     sh_content = cleandoc(f"""
     if [ ! -d {str(database_dir.absolute())} ]; then
