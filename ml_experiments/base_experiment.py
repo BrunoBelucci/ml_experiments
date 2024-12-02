@@ -73,9 +73,10 @@ class BaseExperiment(ABC):
             error_score: str = 'raise',
             # mlflow specific
             log_to_mlflow: bool = True,
-            mlflow_tracking_uri: str = 'sqlite:///' + str(Path.cwd().resolve()) + '/tab_benchmark.db',
+            mlflow_tracking_uri: str = 'sqlite:///' + str(Path.cwd().resolve()) + '/ml_experiment.db',
             check_if_exists: bool = True,
             # parallelization
+            timeout_combination: Optional[int] = None,  # in seconds
             dask_cluster_type: Optional[str] = None,
             n_workers: int = 1,
             n_processes: int = 1,
@@ -163,6 +164,7 @@ class BaseExperiment(ABC):
         self.fits_params = self._validate_dict_of_models_params(fits_params, self.models_nickname)
 
         # parallelization
+        self.timeout_combination = timeout_combination
         self.dask_cluster_type = dask_cluster_type
         self.n_workers = n_workers
         self.n_cores = n_cores
@@ -258,6 +260,7 @@ class BaseExperiment(ABC):
         self.parser.add_argument('--raise_on_fit_error', action='store_true')
 
         self.parser.add_argument('--dask_cluster_type', type=str, default=self.dask_cluster_type)
+        self.parser.add_argument('--timeout_combination', type=int, default=self.timeout_combination)
         self.parser.add_argument('--n_workers', type=int, default=self.n_workers,
                                  help='Maximum number of workers to be used.')
         self.parser.add_argument('--n_cores', type=int, default=self.n_cores,
@@ -305,6 +308,7 @@ class BaseExperiment(ABC):
         self.raise_on_fit_error = args.raise_on_fit_error
 
         self.dask_cluster_type = args.dask_cluster_type
+        self.timeout_combination = args.timeout_combination
         self.n_workers = args.n_workers
         self.n_cores = args.n_cores
         self.n_processes = args.n_processes
@@ -871,6 +875,7 @@ class BaseExperiment(ABC):
         n_combinations_successfully_completed = 0
         n_combinations_failed = 0
         n_combinations_none = 0
+        n_combinations_timed_out = 0
         if client is not None:
             first_args = list(combinations[0])
             list_of_args = [[combination[i] for combination in combinations[1:]] for i in range(n_args)]
@@ -920,12 +925,18 @@ class BaseExperiment(ABC):
                         worker_name = free_workers.pop()
                         worker = workers[worker_name]
                         combination = list(combinations[submitted_combinations])
+                        if self.log_to_mlflow:
+                            mlflow_run_id = combination[-1]
+                        else:
+                            mlflow_run_id = None
                         key = '_'.join(str(arg) for arg in combination)
                         future = client.submit(self._run_combination, *combination, pure=False, key=key,
                                                resources=resources_per_task, workers=[worker_name],
                                                allow_other_workers=True, combination_names=combination_names,
                                                unique_params=unique_params, extra_params=extra_params)
                         future.worker = worker_name
+                        future.start_time = time.perf_counter()
+                        future.mlflow_run_id = mlflow_run_id
                         futures.append(future)
                         worker_can_still_work = True
                         for resource in resources_per_task:
@@ -936,9 +947,34 @@ class BaseExperiment(ABC):
                             free_workers.append(worker_name)
                         submitted_combinations += 1
 
-                    # wait for at least one task to finish
-                    completed_future = next(as_completed(futures))
-                    combination_success = completed_future.result()
+                    # wait for at least one task to finish withing the timeout
+                    try:
+                        # get the timeout that will expire the next future (the oldest one) and wait at max for this
+                        # time (or 1s in the case the oldest future has already passed the timeout time)
+                        if self.timeout_combination is not None:
+                            now_time = time.perf_counter()
+                            oldest_future = max(futures, key=lambda x: now_time - x.start_time)
+                            min_timeout_time = max(self.timeout_combination - (now_time - oldest_future.start_time), 1)
+                        else:
+                            min_timeout_time = None
+                        completed_future = next(as_completed(futures, timeout=min_timeout_time))
+                        combination_success = completed_future.result()
+                    except TimeoutError:
+                        # if we reach the timeout, we will check if any task has reached the timeout and cancel the
+                        # first one that has reached the timeout (we do this one by one to not mess up the following
+                        # logic that was already implemented)
+                        for future in futures:
+                            if time.perf_counter() - future.start_time > self.timeout_combination:
+                                completed_future = future
+                                completed_future.cancel()
+                                if self.log_to_mlflow:
+                                    mlflow_run_id = completed_future.mlflow_run_id
+                                    mlflow_client = mlflow.client.MlflowClient(tracking_uri=self.mlflow_tracking_uri)
+                                    mlflow_client.set_tag(mlflow_run_id, 'timed_out', True)
+                                    mlflow_client.set_terminated(mlflow_run_id, status='FAILED')
+                                break
+                        combination_success = False
+                        n_combinations_timed_out += 1
                     if combination_success is True:
                         n_combinations_successfully_completed += 1
                     elif combination_success is False:
@@ -948,7 +984,8 @@ class BaseExperiment(ABC):
                     finished_combinations += 1
                     progress_bar.update(1)
                     log_and_print_msg(str(progress_bar), succesfully_completed=n_combinations_successfully_completed,
-                                      failed=n_combinations_failed, none=n_combinations_none)
+                                      failed=n_combinations_failed, none=n_combinations_none,
+                                      timed_out=n_combinations_timed_out)
                     completed_worker_name = completed_future.worker
                     worker = workers[completed_worker_name]
                     worker_can_work = True

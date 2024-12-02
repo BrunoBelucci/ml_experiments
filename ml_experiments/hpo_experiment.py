@@ -6,6 +6,7 @@ from typing import Optional
 import optuna
 from optuna_integration import DaskStorage
 from distributed import get_client, worker_client
+from dask.distributed import wait
 import mlflow
 from warnings import warn
 from mlflow.utils.mlflow_tags import MLFLOW_PARENT_RUN_ID
@@ -49,7 +50,7 @@ class HPOExperiment(BaseExperiment, ABC):
     def __init__(self, *args,
                  hpo_framework='optuna',
                  # general
-                 n_trials=30, timeout_experiment=10 * 60 * 60, timeout_trial=2 * 60 * 60, max_concurrent_trials=1,
+                 n_trials=30, timeout_hpo=10 * 60 * 60, timeout_trial=2 * 60 * 60, max_concurrent_trials=1,
                  # optuna
                  sampler='tpe', pruner='hyperband', direction='minimize',
                  **kwargs):
@@ -113,8 +114,8 @@ class HPOExperiment(BaseExperiment, ABC):
             The hyperparameter optimization framework to be used. It must be 'optuna' for the moment.
         n_trials :
             The number of trials to be run.
-        timeout_experiment :
-            The timeout of the experiment in seconds.
+        timeout_hpo :
+            The timeout of the hpo in seconds.
         timeout_trial :
             The timeout of each trial in seconds.
         max_concurrent_trials :
@@ -128,7 +129,7 @@ class HPOExperiment(BaseExperiment, ABC):
         self.hpo_framework = hpo_framework
         # general
         self.n_trials = n_trials
-        self.timeout_experiment = timeout_experiment
+        self.timeout_hpo = timeout_hpo
         self.timeout_trial = timeout_trial
         self.max_concurrent_trials = max_concurrent_trials
         # optuna
@@ -142,7 +143,7 @@ class HPOExperiment(BaseExperiment, ABC):
         self.parser.add_argument('--hpo_framework', type=str, default=self.hpo_framework)
         # general
         self.parser.add_argument('--n_trials', type=int, default=self.n_trials)
-        self.parser.add_argument('--timeout_experiment', type=int, default=self.timeout_experiment)
+        self.parser.add_argument('--timeout_hpo', type=int, default=self.timeout_hpo)
         self.parser.add_argument('--timeout_trial', type=int, default=self.timeout_trial)
         self.parser.add_argument('--max_concurrent_trials', type=int, default=self.max_concurrent_trials)
         # optuna
@@ -155,7 +156,7 @@ class HPOExperiment(BaseExperiment, ABC):
         self.hpo_framework = args.hpo_framework
         # general
         self.n_trials = args.n_trials
-        self.timeout_experiment = args.timeout_experiment
+        self.timeout_hpo = args.timeout_hpo
         self.timeout_trial = args.timeout_trial
         self.max_concurrent_trials = args.max_concurrent_trials
         # optuna
@@ -280,8 +281,8 @@ class HPOExperiment(BaseExperiment, ABC):
         seed_model = combination['seed_model']
         mlflow_run_id = extra_params.get('mlflow_run_id', None)
         model_cls = self.models_dict[model_nickname][0]
-        if hasattr(model_cls, 'has_early_stopping'):
-            model_params['max_time'] = self.timeout_trial
+        timeout_hpo = unique_params['timeout_hpo']
+        timeout_trial = unique_params['timeout_trial']
 
         if self.hpo_framework == 'optuna':
             study = kwargs['load_model_return']['study']
@@ -342,12 +343,12 @@ class HPOExperiment(BaseExperiment, ABC):
                             )
                             trial_numbers.append(trial.number)
                             resources = {'cores': self.n_jobs, 'gpus': self.n_gpus / (self.n_cores / self.n_jobs)}
-                            futures.append(
-                                client.submit(self._training_fn, resources=resources, key=trial_key, pure=False,
+                            future = client.submit(self._training_fn, resources=resources, key=trial_key, pure=False,
                                               single_experiment=single_experiment, trial_combination=trial_combination,
                                               optuna_trial=trial, unique_params=unique_params,
                                               extra_params=extra_params, **kwargs)
-                            )
+                            future.child_run_id = child_run_id
+                            futures.append(future)
                             n_trial += 1
                             if n_trial >= self.n_trials or first_trial:
                                 # we have already enqueued all the trials, or it is the first trial,
@@ -355,9 +356,24 @@ class HPOExperiment(BaseExperiment, ABC):
                                 first_trial = False
                                 break
 
-                        results = client.gather(futures)
+                        try:
+                            wait(futures, timeout=timeout_trial, return_when='ALL_COMPLETED')
+                        except TimeoutError:
+                            pass  # some futures may not have finished yet, we will treat them in the following
+
+                        results = []
                         for future in futures:
-                            future.release()
+                            if future.status == 'finished':
+                                results.append(future.result())
+                                future.release()
+                            else:
+                                results.append({'child_run_id': future.child_run_id, 'evaluate_model_return': {}})
+                                future.cancel()
+                                if future.child_run_id:
+                                    mlflow_client = mlflow.client.MlflowClient(tracking_uri=self.mlflow_tracking_uri)
+                                    mlflow_client.set_tag(future.child_run_id, 'timed_out', True)
+                                    mlflow_client.set_terminated(future.child_run_id, status='FAILED')
+                                future.release()
 
                     for trial_number, result in zip(trial_numbers, results):
                         study_id = storage.get_study_id_from_name(study.study_name)
@@ -376,7 +392,7 @@ class HPOExperiment(BaseExperiment, ABC):
                             eval_result.pop('elapsed_time', None)
                             mlflow.log_metrics(eval_result, run_id=parent_run_id, step=trial_number)
                     elapsed_time = time.perf_counter() - start_time
-                    if elapsed_time > self.timeout_experiment:
+                    if elapsed_time > timeout_hpo:
                         break
                 else:
                     child_run_id = child_runs_ids[n_trial]
@@ -401,7 +417,7 @@ class HPOExperiment(BaseExperiment, ABC):
                         mlflow.log_metrics(eval_result, run_id=parent_run_id, step=trial.number)
                     n_trial += 1
                     elapsed_time = time.perf_counter() - start_time
-                    if elapsed_time > self.timeout_experiment:
+                    if elapsed_time > timeout_hpo:
                         break
 
             pbar.close()
@@ -431,7 +447,7 @@ class HPOExperiment(BaseExperiment, ABC):
     def _get_combinations(self):
         combinations, combination_names, unique_params, extra_params = super()._get_combinations()
         unique_params.update(dict(hpo_framework=self.hpo_framework, n_trials=self.n_trials,
-                                  timeout_experiment=self.timeout_experiment, timeout_trial=self.timeout_trial,
+                                  timeout_hpo=self.timeout_hpo, timeout_trial=self.timeout_trial,
                                   max_concurrent_trials=self.max_concurrent_trials, sampler=self.sampler,
                                   pruner=self.pruner, create_validation_set=self.create_validation_set,
                                   direction=self.direction))
