@@ -369,6 +369,18 @@ class BaseExperiment(ABC):
                                   f"available ({cpu_count()}). This may lead to performance issues.")
                 resources_per_worker = {'cores': threads_per_worker, 'gpus': gpus_per_worker,
                                         'processes': processes_per_worker}
+
+                # set threads used by numpy / scipy (OpenMP, MKL, OpenBLAS)
+                os.environ['OMP_NUM_THREADS'] = str(threads_per_worker)
+                os.environ['MKL_NUM_THREADS'] = str(threads_per_worker)
+                os.environ['OPENBLAS_NUM_THREADS'] = str(threads_per_worker)
+                pre_env = {
+                    'distributed.nanny.pre-spawn-environ.OMP_NUM_THREADS': threads_per_worker,
+                    'distributed.nanny.pre-spawn-environ.MKL_NUM_THREADS': threads_per_worker,
+                    'distributed.nanny.pre-spawn-environ.OPENBLAS_NUM_THREADS': threads_per_worker,
+                }
+                dask.config.set(pre_env)
+
                 cluster = LocalCluster(n_workers=0, memory_limit=self.dask_memory, processes=True,
                                        threads_per_worker=threads_per_worker, resources=resources_per_worker)
                 cluster.scale(n_workers)
@@ -378,6 +390,18 @@ class BaseExperiment(ABC):
                 gpus_per_worker = self.n_gpus
                 resources_per_work = {'cores': cores_per_worker, 'gpus': gpus_per_worker,
                                       'processes': processes_per_worker}
+
+                # set threads used by numpy / scipy (OpenMP, MKL, OpenBLAS)
+                os.environ['OMP_NUM_THREADS'] = str(cores_per_worker)
+                os.environ['MKL_NUM_THREADS'] = str(cores_per_worker)
+                os.environ['OPENBLAS_NUM_THREADS'] = str(cores_per_worker)
+                pre_env = {
+                    'distributed.nanny.pre-spawn-environ.OMP_NUM_THREADS': cores_per_worker,
+                    'distributed.nanny.pre-spawn-environ.MKL_NUM_THREADS': cores_per_worker,
+                    'distributed.nanny.pre-spawn-environ.OPENBLAS_NUM_THREADS': cores_per_worker,
+                }
+                dask.config.set(pre_env)
+
                 job_extra_directives = dask.config.get(
                     "jobqueue.slurm.job-extra-directives", []
                 )
@@ -388,8 +412,11 @@ class BaseExperiment(ABC):
                     "jobqueue.slurm.worker-extra-args", []
                 )
                 job_extra_directives = job_extra_directives + self.dask_job_extra_directives
-                job_script_prologue = job_script_prologue + ['eval "$(conda shell.bash hook)"',
-                                                             'conda activate tab_benchmark']
+                job_script_prologue = job_script_prologue + [f'export OMP_NUM_THREADS={cores_per_worker}'
+                                                             f'export MKL_NUM_THREADS={cores_per_worker}'
+                                                             f'export OPENBLAS_NUM_THREADS={cores_per_worker}'
+                                                             f'eval "$(conda shell.bash hook)"',
+                                                             f'conda activate tab_benchmark']
                 resources_per_work_string = ' '.join([f'{key}={value}' for key, value in resources_per_work.items()])
                 worker_extra_args = worker_extra_args + [f'--resources "{resources_per_work_string}"']
                 walltime = '364-23:59:59'
