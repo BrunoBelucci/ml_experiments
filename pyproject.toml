@@ -39,7 +39,8 @@ dependencies = [
     "tqdm",
     "openml",
     "optuna",
-    "optuna-integration"
+    "optuna-integration",
+    "func-timeout"
 ]
 
 [project.urls]
