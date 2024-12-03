@@ -40,7 +40,12 @@ dependencies = [
     "openml",
     "optuna",
     "optuna-integration",
-    "func-timeout"
+    "func-timeout",
+    "scikit-posthocs",
+    "matplotlib",
+    "seaborn",
+    "plotly",
+    "pandas"
 ]
 
 [project.urls]

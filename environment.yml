@@ -4,6 +4,12 @@ channels:
 dependencies:
   - numpy
   - scikit-learn
+  - scikit-posthocs
+  - pandas
+  - matplotlib
+  - seaborn
+  - plotly
+  - pandas
   - mlflow
   - postgresql
   - psycopg2
