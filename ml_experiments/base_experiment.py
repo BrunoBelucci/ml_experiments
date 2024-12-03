@@ -666,6 +666,7 @@ class BaseExperiment(ABC):
                      return_results: bool = False, **kwargs):
         try:
             results = {}
+            timeout_fit = extra_params.get('timeout_fit', None)
             log_and_print_msg('Running...', **combination, **unique_params)
             start_time = time.perf_counter()
 
@@ -716,12 +717,12 @@ class BaseExperiment(ABC):
                                                                         unique_params=unique_params,
                                                                         extra_params=extra_params, **kwargs, **results)
 
-            if self.timeout_fit is not None:
+            if timeout_fit is not None:
                 kwargs_fit_model = dict(fn=self._fit_model, combination=combination, unique_params=unique_params,
                                         extra_params=extra_params)
                 kwargs_fit_model.update(kwargs)
                 kwargs_fit_model.update(results)
-                results['fit_model_return'] = func_timeout(self.timeout_fit, self._add_elapsed_time,
+                results['fit_model_return'] = func_timeout(timeout_fit, self._add_elapsed_time,
                                                            kwargs=kwargs_fit_model)
             else:
                 results['fit_model_return'] = self._add_elapsed_time(self._fit_model, combination=combination,
@@ -839,6 +840,7 @@ class BaseExperiment(ABC):
                          unique_params: Optional[dict] = None, extra_params: Optional[dict] = None,
                          return_results=False, **kwargs):
         combination_dict = dict(zip(combination_names, combination))
+        timeout_combination = extra_params.get('timeout_combination', None)
 
         # this is ugly, but will work for the moment, in summary we want to find mlflow_run_id in extra_params
         # when inside _train_model
@@ -858,9 +860,9 @@ class BaseExperiment(ABC):
         else:
             kwargs_fn['extra_params']['mlflow_run_id'] = mlflow_run_id
             fn = self._train_model
-        if self.timeout_combination:
+        if timeout_combination:
             try:
-                return func_timeout(self.timeout_combination, fn, kwargs=kwargs_fn)
+                return func_timeout(timeout_combination, fn, kwargs=kwargs_fn)
             except FunctionTimedOut as exception:
                 if self.raise_on_fit_error:
                     raise exception
