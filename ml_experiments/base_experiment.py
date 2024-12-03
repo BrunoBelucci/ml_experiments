@@ -21,6 +21,7 @@ from resource import getrusage, RUSAGE_SELF
 import json
 from abc import ABC, abstractmethod
 from ml_experiments.utils import flatten_dict, get_git_revision_hash, set_mlflow_tracking_uri_check_if_exists
+from func_timeout import func_timeout, FunctionTimedOut
 
 warnings.simplefilter(action='ignore', category=FutureWarning)
 
@@ -71,6 +72,8 @@ class BaseExperiment(ABC):
             raise_on_fit_error: bool = False,
             parser: Optional = None,
             error_score: str = 'raise',
+            timeout_fit: Optional[int] = None,
+            timeout_combination: Optional[int] = None,
             # mlflow specific
             log_to_mlflow: bool = True,
             mlflow_tracking_uri: str = 'sqlite:///' + str(Path.cwd().resolve()) + '/tab_benchmark.db',
@@ -191,6 +194,8 @@ class BaseExperiment(ABC):
         self.parser = parser
         self.raise_on_fit_error = raise_on_fit_error
         self.error_score = error_score
+        self.timeout_fit = timeout_fit
+        self.timeout_combination = timeout_combination
         self.client = None
         self.logger_filename = None
 
@@ -245,6 +250,8 @@ class BaseExperiment(ABC):
                                       'have to escape the quotes and not use spaces if you are using the command line. '
                                       'Please refer to the --models_params argument for examples of usage.')
         self.parser.add_argument('--error_score', type=str, default=self.error_score)
+        self.parser.add_argument('--timeout_fit', type=int, default=self.timeout_fit)
+        self.parser.add_argument('--timeout_combination', type=int, default=self.timeout_combination)
 
         self.parser.add_argument('--log_dir', type=Path, default=self.log_dir)
         self.parser.add_argument('--log_file_name', type=str, default=self.log_file_name)
@@ -293,6 +300,8 @@ class BaseExperiment(ABC):
         if error_score == 'nan':
             error_score = np.nan
         self.error_score = error_score
+        self.timeout_fit = args.timeout_fit
+        self.timeout_combination = args.timeout_combination
 
         self.log_dir = args.log_dir
         self.log_file_name = args.log_file_name
@@ -627,6 +636,32 @@ class BaseExperiment(ABC):
         else:
             return result, elapsed_time
 
+    def _treat_train_model_exception(self, exception, combination: dict, unique_params: Optional[dict] = None,
+                                     extra_params: Optional[dict] = None, results: Optional[dict] = None,
+                                     start_time: Optional[float] = None, return_results: bool = False,
+                                     **kwargs):
+        total_elapsed_time = time.perf_counter() - start_time
+        results['total_elapsed_time'] = total_elapsed_time
+        if isinstance(exception, FunctionTimedOut):
+            exception_to_log = 'FunctionTimedOut'  # otherwise it is difficult to read the log
+        else:
+            exception_to_log = exception
+        results['on_exception_return'] = self._add_elapsed_time(self._on_exception, exception=exception_to_log,
+                                                                combination=combination,
+                                                                unique_params=unique_params,
+                                                                extra_params=extra_params, **kwargs, **results)
+        log_and_print_msg('Error while running', exception=exception_to_log, total_elapsed_time=total_elapsed_time,
+                          **combination, **unique_params)
+        if self.raise_on_fit_error:
+            raise exception
+        if return_results:
+            try:
+                return results
+            except UnboundLocalError:
+                return {}
+        else:
+            return False
+
     def _train_model(self, combination: dict, unique_params: Optional[dict] = None, extra_params: Optional[dict] = None,
                      return_results: bool = False, **kwargs):
         try:
@@ -680,9 +715,18 @@ class BaseExperiment(ABC):
             results['before_fit_model_return'] = self._add_elapsed_time(self._before_fit_model, combination=combination,
                                                                         unique_params=unique_params,
                                                                         extra_params=extra_params, **kwargs, **results)
-            results['fit_model_return'] = self._add_elapsed_time(self._fit_model, combination=combination,
-                                                                 unique_params=unique_params,
-                                                                 extra_params=extra_params, **kwargs, **results)
+
+            if self.timeout_fit is not None:
+                kwargs_fit_model = dict(fn=self._fit_model, combination=combination, unique_params=unique_params,
+                                        extra_params=extra_params)
+                kwargs_fit_model.update(kwargs)
+                kwargs_fit_model.update(results)
+                results['fit_model_return'] = func_timeout(self.timeout_fit, self._add_elapsed_time,
+                                                           kwargs=kwargs_fit_model)
+            else:
+                results['fit_model_return'] = self._add_elapsed_time(self._fit_model, combination=combination,
+                                                                     unique_params=unique_params,
+                                                                     extra_params=extra_params, **kwargs, **results)
             results['after_fit_model_return'] = self._add_elapsed_time(self._after_fit_model, combination=combination,
                                                                        unique_params=unique_params,
                                                                        extra_params=extra_params, **kwargs, **results)
@@ -701,25 +745,15 @@ class BaseExperiment(ABC):
                                                                             unique_params=unique_params,
                                                                             extra_params=extra_params, **kwargs,
                                                                             **results)
-
+        except FunctionTimedOut as exception:
+            # we need to catch FunctionTimedOut separately because it is not a subclass of Exception
+            return self._treat_train_model_exception(exception, combination=combination, unique_params=unique_params,
+                                                     extra_params=extra_params, results=results, start_time=start_time,
+                                                     return_results=return_results, **kwargs)
         except Exception as exception:
-            total_elapsed_time = time.perf_counter() - start_time
-            results['total_elapsed_time'] = total_elapsed_time
-            results['on_exception_return'] = self._add_elapsed_time(self._on_exception, exception=exception,
-                                                                    combination=combination,
-                                                                    unique_params=unique_params,
-                                                                    extra_params=extra_params, **kwargs, **results)
-            log_and_print_msg('Error while running', exception=exception, total_elapsed_time=total_elapsed_time,
-                              **combination, **unique_params)
-            if self.raise_on_fit_error:
-                raise exception
-            if return_results:
-                try:
-                    return results
-                except UnboundLocalError:
-                    return {}
-            else:
-                return False
+            return self._treat_train_model_exception(exception, combination=combination, unique_params=unique_params,
+                                                     extra_params=extra_params, results=results, start_time=start_time,
+                                                     return_results=return_results, **kwargs)
         else:
             total_elapsed_time = time.perf_counter() - start_time
             results['total_elapsed_time'] = total_elapsed_time
@@ -814,15 +848,28 @@ class BaseExperiment(ABC):
             mlflow_run_id = extra_params.pop('mlflow_run_id', None)
             if mlflow_run_id is None:
                 mlflow_run_id = kwargs.pop('mlflow_run_id', None)
+
+        kwargs_fn = dict(combination=combination_dict, unique_params=unique_params,
+                         extra_params=extra_params, return_results=return_results)
+        kwargs_fn.update(kwargs)
         if self.log_to_mlflow:
-            return self._run_mlflow_and_train_model(combination=combination_dict, unique_params=unique_params,
-                                                    extra_params=extra_params,
-                                                    mlflow_run_id=mlflow_run_id, return_results=return_results,
-                                                    **kwargs)
+            kwargs_fn['mlflow_run_id'] = mlflow_run_id
+            fn = self._run_mlflow_and_train_model
         else:
-            extra_params['mlflow_run_id'] = mlflow_run_id
-            return self._train_model(combination=combination_dict, unique_params=unique_params,
-                                     extra_params=extra_params, return_results=return_results, **kwargs)
+            kwargs_fn['extra_params']['mlflow_run_id'] = mlflow_run_id
+            fn = self._train_model
+        if self.timeout_combination:
+            try:
+                return func_timeout(self.timeout_combination, fn, kwargs=kwargs_fn)
+            except FunctionTimedOut as exception:
+                if self.raise_on_fit_error:
+                    raise exception
+                if return_results:
+                    return {}
+                else:
+                    return False
+        else:
+            return fn(**kwargs_fn)
 
     @abstractmethod
     def _get_combinations(self):
