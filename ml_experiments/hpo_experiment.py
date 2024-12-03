@@ -13,6 +13,7 @@ from ml_experiments.base_experiment import BaseExperiment
 from sklearn.utils import check_random_state
 from tqdm.auto import tqdm
 import numpy as np
+from func_timeout import func_timeout, FunctionTimedOut
 
 
 def discretize_search_space(search_space):
@@ -49,7 +50,7 @@ class HPOExperiment(BaseExperiment, ABC):
     def __init__(self, *args,
                  hpo_framework='optuna',
                  # general
-                 n_trials=30, timeout_experiment=10 * 60 * 60, timeout_trial=2 * 60 * 60, max_concurrent_trials=1,
+                 n_trials=30, timeout_hpo=10 * 60 * 60, timeout_trial=2 * 60 * 60, max_concurrent_trials=1,
                  # optuna
                  sampler='tpe', pruner='hyperband', direction='minimize',
                  **kwargs):
@@ -113,7 +114,7 @@ class HPOExperiment(BaseExperiment, ABC):
             The hyperparameter optimization framework to be used. It must be 'optuna' for the moment.
         n_trials :
             The number of trials to be run.
-        timeout_experiment :
+        timeout_hpo :
             The timeout of the experiment in seconds.
         timeout_trial :
             The timeout of each trial in seconds.
@@ -128,7 +129,7 @@ class HPOExperiment(BaseExperiment, ABC):
         self.hpo_framework = hpo_framework
         # general
         self.n_trials = n_trials
-        self.timeout_experiment = timeout_experiment
+        self.timeout_hpo = timeout_hpo
         self.timeout_trial = timeout_trial
         self.max_concurrent_trials = max_concurrent_trials
         # optuna
@@ -142,7 +143,7 @@ class HPOExperiment(BaseExperiment, ABC):
         self.parser.add_argument('--hpo_framework', type=str, default=self.hpo_framework)
         # general
         self.parser.add_argument('--n_trials', type=int, default=self.n_trials)
-        self.parser.add_argument('--timeout_experiment', type=int, default=self.timeout_experiment)
+        self.parser.add_argument('--timeout_hpo', type=int, default=self.timeout_hpo)
         self.parser.add_argument('--timeout_trial', type=int, default=self.timeout_trial)
         self.parser.add_argument('--max_concurrent_trials', type=int, default=self.max_concurrent_trials)
         # optuna
@@ -155,7 +156,7 @@ class HPOExperiment(BaseExperiment, ABC):
         self.hpo_framework = args.hpo_framework
         # general
         self.n_trials = args.n_trials
-        self.timeout_experiment = args.timeout_experiment
+        self.timeout_hpo = args.timeout_hpo
         self.timeout_trial = args.timeout_trial
         self.max_concurrent_trials = args.max_concurrent_trials
         # optuna
@@ -227,10 +228,21 @@ class HPOExperiment(BaseExperiment, ABC):
         combination_names = list(trial_combination.keys())
         extra_params = extra_params.copy()
         parent_run_id = extra_params.pop('mlflow_run_id', None)
-        results = single_experiment._run_combination(*combination_values, combination_names=combination_names,
-                                                     unique_params=unique_params,
-                                                     extra_params=extra_params,
-                                                     return_results=True)
+        timeout_trial = extra_params.pop('timeout_trial', None)
+        if timeout_trial is not None:
+            results = single_experiment._run_combination(*combination_values, combination_names=combination_names,
+                                                         unique_params=unique_params,
+                                                         extra_params=extra_params,
+                                                         return_results=True)
+        else:
+            fn = single_experiment._run_combination
+            kwargs_fn = dict(combination_names=combination_names, unique_params=unique_params,
+                             extra_params=extra_params, return_results=True)
+            try:
+                results = func_timeout(timeout_trial, fn, args=combination_values, kwargs=kwargs_fn)
+            except FunctionTimedOut:
+                results = {'evaluate_model_return': {}}
+
         # we do not need to keep all the results (data, model...), only the evaluation results
         child_run_id = trial_combination.get('mlflow_run_id', None)
         keep_results = {'evaluate_model_return': results['evaluate_model_return'], 'child_run_id': child_run_id}
@@ -280,8 +292,7 @@ class HPOExperiment(BaseExperiment, ABC):
         seed_model = combination['seed_model']
         mlflow_run_id = extra_params.get('mlflow_run_id', None)
         model_cls = self.models_dict[model_nickname][0]
-        if hasattr(model_cls, 'has_early_stopping'):
-            model_params['max_time'] = self.timeout_trial
+        timeout_hpo = unique_params['timeout_hpo']
 
         if self.hpo_framework == 'optuna':
             study = kwargs['load_model_return']['study']
@@ -295,7 +306,6 @@ class HPOExperiment(BaseExperiment, ABC):
                 n_trials = np.prod(n_samples_params)
             else:
                 n_trials = self.n_trials
-
 
             # objective and search space (distribution)
             search_space, default_values = model_cls.create_search_space()
@@ -376,7 +386,7 @@ class HPOExperiment(BaseExperiment, ABC):
                             eval_result.pop('elapsed_time', None)
                             mlflow.log_metrics(eval_result, run_id=parent_run_id, step=trial_number)
                     elapsed_time = time.perf_counter() - start_time
-                    if elapsed_time > self.timeout_experiment:
+                    if elapsed_time > timeout_hpo:
                         break
                 else:
                     child_run_id = child_runs_ids[n_trial]
@@ -401,7 +411,7 @@ class HPOExperiment(BaseExperiment, ABC):
                         mlflow.log_metrics(eval_result, run_id=parent_run_id, step=trial.number)
                     n_trial += 1
                     elapsed_time = time.perf_counter() - start_time
-                    if elapsed_time > self.timeout_experiment:
+                    if elapsed_time > timeout_hpo:
                         break
 
             pbar.close()
@@ -431,7 +441,7 @@ class HPOExperiment(BaseExperiment, ABC):
     def _get_combinations(self):
         combinations, combination_names, unique_params, extra_params = super()._get_combinations()
         unique_params.update(dict(hpo_framework=self.hpo_framework, n_trials=self.n_trials,
-                                  timeout_experiment=self.timeout_experiment, timeout_trial=self.timeout_trial,
+                                  timeout_hpo=self.timeout_hpo, timeout_trial=self.timeout_trial,
                                   max_concurrent_trials=self.max_concurrent_trials, sampler=self.sampler,
                                   pruner=self.pruner, create_validation_set=self.create_validation_set,
                                   direction=self.direction))
