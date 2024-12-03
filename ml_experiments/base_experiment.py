@@ -76,7 +76,7 @@ class BaseExperiment(ABC):
             timeout_combination: Optional[int] = None,
             # mlflow specific
             log_to_mlflow: bool = True,
-            mlflow_tracking_uri: str = 'sqlite:///' + str(Path.cwd().resolve()) + '/tab_benchmark.db',
+            mlflow_tracking_uri: str = 'sqlite:///' + str(Path.cwd().resolve()) + '/ml_experiments.db',
             check_if_exists: bool = True,
             # parallelization
             dask_cluster_type: Optional[str] = None,
@@ -137,7 +137,7 @@ class BaseExperiment(ABC):
         log_to_mlflow :
             If True, log the results to mlflow. Defaults to True.
         mlflow_tracking_uri :
-            The uri of the mlflow server. Defaults to 'sqlite:///' + str(Path.cwd().resolve()) + '/tab_benchmark.db'.
+            The uri of the mlflow server. Defaults to 'sqlite:///' + str(Path.cwd().resolve()) + '/ml_experiments.db'.
         check_if_exists :
             If True, check if the experiment already exists in mlflow. Defaults to True.
         dask_cluster_type :
@@ -425,7 +425,7 @@ class BaseExperiment(ABC):
                                                              f'export MKL_NUM_THREADS={cores_per_worker}'
                                                              f'export OPENBLAS_NUM_THREADS={cores_per_worker}'
                                                              f'eval "$(conda shell.bash hook)"',
-                                                             f'conda activate tab_benchmark']
+                                                             f'conda activate $CONDA_DEFAULT_ENV']
                 resources_per_work_string = ' '.join([f'{key}={value}' for key, value in resources_per_work.items()])
                 worker_extra_args = worker_extra_args + [f'--resources "{resources_per_work_string}"']
                 walltime = '364-23:59:59'
