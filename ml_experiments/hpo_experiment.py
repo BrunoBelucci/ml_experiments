@@ -228,7 +228,7 @@ class HPOExperiment(BaseExperiment, ABC):
         combination_names = list(trial_combination.keys())
         extra_params = extra_params.copy()
         parent_run_id = extra_params.pop('mlflow_run_id', None)
-        timeout_trial = extra_params.pop('timeout_trial', None)
+        timeout_trial = extra_params.pop('timeout_trial', self.timeout_trial)
         if timeout_trial is not None:
             results = single_experiment._run_combination(*combination_values, combination_names=combination_names,
                                                          unique_params=unique_params,
@@ -292,7 +292,7 @@ class HPOExperiment(BaseExperiment, ABC):
         seed_model = combination['seed_model']
         mlflow_run_id = extra_params.get('mlflow_run_id', None)
         model_cls = self.models_dict[model_nickname][0]
-        timeout_hpo = unique_params['timeout_hpo']
+        timeout_hpo = unique_params.get('timeout_hpo', self.timeout_hpo)
 
         if self.hpo_framework == 'optuna':
             study = kwargs['load_model_return']['study']
