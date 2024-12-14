@@ -369,6 +369,8 @@ class BaseExperiment(ABC):
         if address is not None:
             client = Client(address)
         else:
+            # allow multiprocessing with joblib inside dask workers
+            dask.config.set({'distributed.worker.daemon': False})
             if cluster_type == 'local':
                 threads_per_worker = self.n_cores
                 processes_per_worker = self.n_processes
