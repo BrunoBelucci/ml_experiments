@@ -229,7 +229,7 @@ class HPOExperiment(BaseExperiment, ABC):
         extra_params = extra_params.copy()
         parent_run_id = extra_params.pop('mlflow_run_id', None)
         timeout_trial = extra_params.pop('timeout_trial', self.timeout_trial)
-        if timeout_trial is not None:
+        if timeout_trial == 0:
             results = single_experiment._run_combination(*combination_values, combination_names=combination_names,
                                                          unique_params=unique_params,
                                                          extra_params=extra_params,
