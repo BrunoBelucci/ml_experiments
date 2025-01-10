@@ -341,6 +341,8 @@ class HPOExperiment(BaseExperiment, ABC):
             # we will run several experiments
             single_experiment = self._load_single_experiment(combination, unique_params=unique_params,
                                                              extra_params=extra_params, **kwargs)
+            grid_search_stopped = False
+            elapsed_time_timed_out = False
             n_trial = 0
             first_trial = True
             start_time = time.perf_counter()
@@ -385,6 +387,9 @@ class HPOExperiment(BaseExperiment, ABC):
                         try:
                             study.tell(trial_number, self._get_tell_metric_from_results(result))
                         except RuntimeError:  # handle stop of grid search
+                            if not grid_search_stopped:  # we save the n_trial when the grid search stopped
+                                n_trials_effective = n_trial
+                            grid_search_stopped = True
                             pass
                         pbar.update(1)
                         if parent_run_id:
@@ -392,6 +397,8 @@ class HPOExperiment(BaseExperiment, ABC):
                             mlflow.log_metrics(eval_result, run_id=parent_run_id, step=trial_number)
                     elapsed_time = time.perf_counter() - start_time
                     if elapsed_time > timeout_hpo:
+                        elapsed_time_timed_out = True
+                        n_trials_effective = n_trial
                         break
                 else:
                     child_run_id = child_runs_ids[n_trial]
@@ -409,6 +416,9 @@ class HPOExperiment(BaseExperiment, ABC):
                     try:
                         study.tell(trial, self._get_tell_metric_from_results(result))
                     except RuntimeError:  # handle stop of grid search
+                        if not grid_search_stopped:  # we save the n_trial when the grid search stopped
+                            n_trials_effective = n_trial
+                        grid_search_stopped = True
                         pass
                     pbar.update(1)
                     if parent_run_id:
@@ -417,9 +427,35 @@ class HPOExperiment(BaseExperiment, ABC):
                     n_trial += 1
                     elapsed_time = time.perf_counter() - start_time
                     if elapsed_time > timeout_hpo:
+                        elapsed_time_timed_out = True
+                        n_trials_effective = n_trial
                         break
 
             pbar.close()
+
+            if grid_search_stopped:
+                if parent_run_id:
+                    mlflow_client = mlflow.client.MlflowClient(tracking_uri=self.mlflow_tracking_uri)
+                    mlflow_client.set_tag(parent_run_id, 'grid_search_stopped', 'True')
+                    mlflow_client.set_tag(parent_run_id, 'n_trials_effective', n_trials_effective)
+                    for child_run_id in child_runs_ids:
+                        run_status = mlflow_client.get_run(child_run_id).info.status
+                        if run_status == 'SCHEDULED':
+                            mlflow_client.set_tag(child_run_id, 'raised_exception', True)
+                            mlflow_client.set_tag(child_run_id, 'EXCEPTION', 'Grid search stopped.')
+                            mlflow_client.set_terminated(child_run_id, status='FAILED')
+            elif elapsed_time_timed_out:
+                if parent_run_id:
+                    mlflow_client = mlflow.client.MlflowClient(tracking_uri=self.mlflow_tracking_uri)
+                    mlflow_client.set_tag(parent_run_id, 'elapsed_time_timed_out', 'True')
+                    mlflow_client.set_tag(parent_run_id, 'n_trials_effective', n_trials_effective)
+                    for child_run_id in child_runs_ids:
+                        run_status = mlflow_client.get_run(child_run_id).info.status
+                        if run_status == 'SCHEDULED':
+                            mlflow_client.set_tag(child_run_id, 'raised_exception', True)
+                            mlflow_client.set_tag(child_run_id, 'EXCEPTION', 'Elapsed time timed out.')
+                            mlflow_client.set_terminated(child_run_id, status='FAILED')
+
             return {}
 
         else:
