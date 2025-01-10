@@ -240,6 +240,11 @@ class HPOExperiment(BaseExperiment, ABC):
                              extra_params=extra_params, return_results=True)
             try:
                 results = func_timeout(timeout_trial, fn, args=combination_values, kwargs=kwargs_fn)
+                if not isinstance(results, dict):
+                    results = {'evaluate_model_return': {}}
+                else:
+                    if 'evaluate_model_return' not in results:
+                        results['evaluate_model_return'] = {}
             except FunctionTimedOut:
                 results = {'evaluate_model_return': {}}
 
