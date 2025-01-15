@@ -468,6 +468,9 @@ class HPOExperiment(BaseExperiment, ABC):
         best_trial = study.best_trial
         best_metric_results = {f'best_{metric}': value for metric, value in best_trial.user_attrs.items()
                                if not metric.startswith('elapsed_') and not metric.startswith('child_run_id')}
+        # if best_metric_results is empty it means that every trial failed, we will raise an exception
+        if not best_metric_results:
+            raise ValueError('Every trial failed, no best model was found')
 
         mlflow_run_id = extra_params.get('mlflow_run_id', None)
         if mlflow_run_id is not None:
