@@ -502,7 +502,7 @@ class HPOExperiment(BaseExperiment, ABC):
                                   timeout_hpo=self.timeout_hpo, timeout_trial=self.timeout_trial,
                                   max_concurrent_trials=self.max_concurrent_trials, sampler=self.sampler,
                                   pruner=self.pruner, create_validation_set=self.create_validation_set,
-                                  direction=self.direction))
+                                  direction=self.direction, metric=self.metric))
         if not self.create_validation_set:
             warn('HPOExperiment usually requires a validation set, are you sure you did not forgot set'
                  ' create_validation_set=True or pass --create_validation_set')
