@@ -52,7 +52,7 @@ class HPOExperiment(BaseExperiment, ABC):
                  # general
                  n_trials=30, timeout_hpo=10 * 60 * 60, timeout_trial=2 * 60 * 60, max_concurrent_trials=1,
                  # optuna
-                 sampler='tpe', pruner='hyperband', direction='minimize',
+                 sampler='tpe', pruner='hyperband', direction='minimize', metric=None,
                  **kwargs):
         """HPO experiment.
 
@@ -136,6 +136,7 @@ class HPOExperiment(BaseExperiment, ABC):
         self.sampler = sampler
         self.pruner = pruner
         self.direction = direction
+        self.metric = metric
         self.log_dir_dask = None
 
     def _add_arguments_to_parser(self):
@@ -150,6 +151,7 @@ class HPOExperiment(BaseExperiment, ABC):
         self.parser.add_argument('--sampler', type=str, default=self.sampler)
         self.parser.add_argument('--pruner', type=str, default=self.pruner)
         self.parser.add_argument('--direction', type=str, default=self.direction)
+        self.parser.add_argument('--metric', type=str, default=self.metric)
 
     def _unpack_parser(self):
         args = super()._unpack_parser()
@@ -163,6 +165,7 @@ class HPOExperiment(BaseExperiment, ABC):
         self.sampler = args.sampler
         self.pruner = args.pruner
         self.direction = args.direction
+        self.metric = args.metric
 
     @abstractmethod
     def get_hyperband_max_resources(self, combination: dict, unique_params: Optional[dict] = None,
@@ -288,6 +291,17 @@ class HPOExperiment(BaseExperiment, ABC):
     @abstractmethod
     def _get_tell_metric_from_results(self, results):
         raise NotImplementedError('This method must be implemented in the subclass')
+
+    def _get_tell_metric_from_results(self, results):
+        evaluate_model_return = results.get('evaluate_model_return', {})
+        metric = evaluate_model_return.get(self.metric, None)
+        if metric is None:
+            warn(f'Metric {self.metric} not found in evaluate_model_return')
+            if self.direction == 'maximize':
+                return -float('inf')
+            else:
+                return float('inf')
+        return evaluate_model_return[self.metric]
 
     def _fit_model(self, combination: dict, unique_params: Optional[dict] = None,
                    extra_params: Optional[dict] = None, **kwargs):
