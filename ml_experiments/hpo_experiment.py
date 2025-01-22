@@ -52,7 +52,7 @@ class HPOExperiment(BaseExperiment, ABC):
                  # general
                  n_trials=30, timeout_hpo=10 * 60 * 60, timeout_trial=2 * 60 * 60, max_concurrent_trials=1,
                  # optuna
-                 sampler='tpe', pruner='hyperband', direction='minimize', metric=None,
+                 sampler='tpe', pruner='hyperband', direction='minimize', hpo_metric=None,
                  **kwargs):
         """HPO experiment.
 
@@ -136,7 +136,7 @@ class HPOExperiment(BaseExperiment, ABC):
         self.sampler = sampler
         self.pruner = pruner
         self.direction = direction
-        self.metric = metric
+        self.hpo_metric = hpo_metric
         self.log_dir_dask = None
 
     def _add_arguments_to_parser(self):
@@ -151,7 +151,7 @@ class HPOExperiment(BaseExperiment, ABC):
         self.parser.add_argument('--sampler', type=str, default=self.sampler)
         self.parser.add_argument('--pruner', type=str, default=self.pruner)
         self.parser.add_argument('--direction', type=str, default=self.direction)
-        self.parser.add_argument('--metric', type=str, default=self.metric)
+        self.parser.add_argument('--hpo_metric', type=str, default=self.hpo_metric)
 
     def _unpack_parser(self):
         args = super()._unpack_parser()
@@ -165,7 +165,7 @@ class HPOExperiment(BaseExperiment, ABC):
         self.sampler = args.sampler
         self.pruner = args.pruner
         self.direction = args.direction
-        self.metric = args.metric
+        self.hpo_metric = args.hpo_metric
 
     @abstractmethod
     def get_hyperband_max_resources(self, combination: dict, unique_params: Optional[dict] = None,
@@ -294,14 +294,14 @@ class HPOExperiment(BaseExperiment, ABC):
 
     def _get_tell_metric_from_results(self, results):
         evaluate_model_return = results.get('evaluate_model_return', {})
-        metric = evaluate_model_return.get(self.metric, None)
-        if metric is None:
-            warn(f'Metric {self.metric} not found in evaluate_model_return')
+        hpo_metric = evaluate_model_return.get(self.hpo_metric, None)
+        if hpo_metric is None:
+            warn(f'hpo_metric {self.hpo_metric} not found in evaluate_model_return')
             if self.direction == 'maximize':
                 return -float('inf')
             else:
                 return float('inf')
-        return evaluate_model_return[self.metric]
+        return evaluate_model_return[self.hpo_metric]
 
     def _fit_model(self, combination: dict, unique_params: Optional[dict] = None,
                    extra_params: Optional[dict] = None, **kwargs):
@@ -502,7 +502,7 @@ class HPOExperiment(BaseExperiment, ABC):
                                   timeout_hpo=self.timeout_hpo, timeout_trial=self.timeout_trial,
                                   max_concurrent_trials=self.max_concurrent_trials, sampler=self.sampler,
                                   pruner=self.pruner, create_validation_set=self.create_validation_set,
-                                  direction=self.direction, metric=self.metric))
+                                  direction=self.direction, hpo_metric=self.hpo_metric))
         if not self.create_validation_set:
             warn('HPOExperiment usually requires a validation set, are you sure you did not forgot set'
                  ' create_validation_set=True or pass --create_validation_set')
