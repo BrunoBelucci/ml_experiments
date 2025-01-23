@@ -232,6 +232,10 @@ class HPOExperiment(BaseExperiment, ABC):
         extra_params = extra_params.copy()
         parent_run_id = extra_params.pop('mlflow_run_id', None)
         timeout_trial = extra_params.pop('timeout_trial', self.timeout_trial)
+        unique_params = unique_params.copy()
+        # we actually need to consider parent_run_id as a unique parameter, because it will be used
+        # exclusively for the parent_run, we cannot use a run from another parent_run for hpo
+        unique_params['parent_run_id'] = parent_run_id
         if timeout_trial == 0:
             results = single_experiment._run_combination(*combination_values, combination_names=combination_names,
                                                          unique_params=unique_params,
