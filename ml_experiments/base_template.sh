@@ -1,4 +1,11 @@
 #!/bin/bash
+# This is a template to run base_experiment with all the possible arguments directly from the command line
+# You can copy this script and modify the values of the arguments to run your own experiments
+# Besides, you can add more arguments to the dictionaries args_dict and bool_args_dict if needed (for example when
+# creating other experiments derived from base_experiment) take a look at hpo_template.sb for an example of how to add
+# more arguments.
+# Finally, if you need to run one python command for each combination of arguments, we have also a script for that
+# called multi_base_template.sh that can be used as a template for that purpose.
 environment_name=""
 experiment_python_location=""
 

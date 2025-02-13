@@ -1,5 +1,15 @@
 #!/bin/bash
-# Same as base_template.sh, but with additional arguments for the hpo_experiment
+#SBATCH --job-name=JOB_NAME
+#SBATCH -c N_CORES
+#SBATCH -w NODE_NAME
+#SBATCH --exclude=NODE_NAME1,NODE_NAME2...
+#SBATCH --output=/path/to/output_dir/%x.%J.out
+#SBATCH --error=/path/to/output_dir/%x.%J.err
+#SBATCH --time=364-23:59:59
+#SBATCH -G N_GPUS -> delete if not using GPUs, use either this line or the next one
+#SBATCH --gres=mps:%OF_GPUS -> delete if not using GPUs, use either this line or the previous one
+
+# then copy another template or modify this one accordingly
 environment_name=""
 experiment_python_location=""
 
@@ -28,16 +38,6 @@ declare -A args_dict=(
 ["dask_job_extra_directives"]=""
 ["dask_address"]=""
 ["n_gpus"]=""
-# hpo
-["hpo_framework"]=""
-["n_trials"]=""
-["timeout_hpo"]=""
-["timeout_trial"]=""
-["max_concurrent_trials"]=""
-["sampler"]=""
-["pruner"]=""
-["direction"]=""
-["hpo_metric"]=""
 )
 
 declare -A bool_args_dict=(
