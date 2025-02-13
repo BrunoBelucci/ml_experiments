@@ -43,10 +43,10 @@ declare -A bool_args_dict=(
 )
 
 declare -A array_args_dict=(
-# Note that bash does not allow arrays inside dictionaries, so we will use strings with a delimiter
+# Note that bash does not allow arrays inside dictionaries, so we will use strings
 # base
-["models_nickname"]="Model1,Model2"
-["seeds_models"]="0,1"
+["models_nickname"]="Model1 Model2"
+["seeds_models"]="0 1"
 )
 
 # Construct the argument string
@@ -70,7 +70,8 @@ done
 string_for_cartesian_product=""
 for key in "${!array_args_dict[@]}"; do
   str_array=${array_args_dict[$key]}
-  n_elements=$(echo $str_array | tr ',' ' ' | wc -w)
+  n_elements=$(echo $str_array | wc -w)
+  str_array=$(echo $str_array | tr ' ' ',')
   if [ $n_elements -eq 0 ]; then
     continue
   elif [ $n_elements -eq 1 ]; then
@@ -106,5 +107,5 @@ for i_combination in "${!cartesian_product[@]}"; do
   done
   # string_combination is now like "--models_nickname Model1 --seeds_models 0"
   # Run the python command
-  python $experiment_python_location $args_str $string_combination
+  echo $experiment_python_location $args_str $string_combination
 done
