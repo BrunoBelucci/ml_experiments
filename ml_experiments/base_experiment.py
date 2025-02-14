@@ -786,6 +786,9 @@ class BaseExperiment(ABC):
         tags_to_log = dict(
             # slurm parameters
             SLURM_JOB_ID=os.getenv('SLURM_JOB_ID', None),
+            SLURM_STEP_ID=os.getenv('SLURM_STEP_ID', None),
+            SLURM_ARRAY_TASK_ID=os.getenv('SLURM_ARRAY_TASK_ID', None),
+            SLURM_LOCALID=os.getenv('SLURM_LOCALID', None),
             SLURMD_NODENAME=os.getenv('SLURMD_NODENAME', None),
         )
         mlflow.log_params(params_to_log, run_id=mlflow_run_id)
