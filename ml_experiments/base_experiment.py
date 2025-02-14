@@ -42,14 +42,15 @@ class LoggingSetterPlugin(WorkerPlugin):
         logging.basicConfig(**self.logging_config)
 
 
-def log_and_print_msg(first_line, **kwargs):
-    slurm_job_id = os.getenv('SLURM_JOB_ID', None)
-    if slurm_job_id is not None:
-        first_line = f"SLURM_JOB_ID: {slurm_job_id}\n{first_line}"
-    first_line = f"{first_line}\n"
-    first_line += "".join([f"{key}: {value}\n" for key, value in kwargs.items()])
-    print(first_line)
-    logging.info(first_line)
+def log_and_print_msg(first_line, verbose, verbose_level, **kwargs):
+    if verbose >= verbose_level:
+        slurm_job_id = os.getenv('SLURM_JOB_ID', None)
+        if slurm_job_id is not None:
+            first_line = f"SLURM_JOB_ID: {slurm_job_id}\n{first_line}"
+        first_line = f"{first_line}\n"
+        first_line += "".join([f"{key}: {value}\n" for key, value in kwargs.items()])
+        print(first_line)
+        logging.info(first_line)
 
 
 class BaseExperiment(ABC):
@@ -74,6 +75,7 @@ class BaseExperiment(ABC):
             error_score: str = 'raise',
             timeout_fit: Optional[int] = None,
             timeout_combination: Optional[int] = None,
+            verbose: int = 1,
             # mlflow specific
             log_to_mlflow: bool = True,
             mlflow_tracking_uri: str = 'sqlite:///' + str(Path.cwd().resolve()) + '/ml_experiments.db',
@@ -196,6 +198,7 @@ class BaseExperiment(ABC):
         self.error_score = error_score
         self.timeout_fit = timeout_fit
         self.timeout_combination = timeout_combination
+        self.verbose = verbose
         self.client = None
         self.logger_filename = None
 
@@ -252,6 +255,7 @@ class BaseExperiment(ABC):
         self.parser.add_argument('--error_score', type=str, default=self.error_score)
         self.parser.add_argument('--timeout_fit', type=int, default=self.timeout_fit)
         self.parser.add_argument('--timeout_combination', type=int, default=self.timeout_combination)
+        self.parser.add_argument('--verbose', type=int, default=self.verbose)
 
         self.parser.add_argument('--log_dir', type=Path, default=self.log_dir)
         self.parser.add_argument('--log_file_name', type=str, default=self.log_file_name)
@@ -302,6 +306,7 @@ class BaseExperiment(ABC):
         self.error_score = error_score
         self.timeout_fit = args.timeout_fit
         self.timeout_combination = args.timeout_combination
+        self.verbose = args.verbose
 
         self.log_dir = args.log_dir
         self.log_file_name = args.log_file_name
@@ -436,11 +441,13 @@ class BaseExperiment(ABC):
                                        job_extra_directives=job_extra_directives,
                                        job_script_prologue=job_script_prologue, walltime=walltime,
                                        job_name=job_name, worker_extra_args=worker_extra_args)
-                log_and_print_msg(f"Cluster script generated:\n{cluster.job_script()}")
+                log_and_print_msg(f"Cluster script generated:\n{cluster.job_script()}", verbose=self.verbose,
+                                  verbose_level=1)
                 cluster.scale(n_workers)
             else:
                 raise ValueError("cluster_type must be either 'local' or 'slurm'.")
-            log_and_print_msg("Cluster dashboard address", dashboard_address=cluster.dashboard_link)
+            log_and_print_msg("Cluster dashboard address", dashboard_address=cluster.dashboard_link,
+                              verbose=self.verbose, verbose_level=1)
             client = cluster.get_client()
         logging_plugin = LoggingSetterPlugin(logging_config={'level': logging.INFO})
         client.register_plugin(logging_plugin)
@@ -652,7 +659,8 @@ class BaseExperiment(ABC):
                                                                 combination=combination,
                                                                 unique_params=unique_params,
                                                                 extra_params=extra_params, **kwargs, **results)
-        log_and_print_msg('Error while running', exception=exception_to_log, total_elapsed_time=total_elapsed_time,
+        log_and_print_msg('Error while running', verbose=self.verbose, verbose_level=1,
+                          exception=exception_to_log, total_elapsed_time=total_elapsed_time,
                           **combination, **unique_params)
         if self.raise_on_fit_error:
             raise exception
@@ -669,7 +677,7 @@ class BaseExperiment(ABC):
         try:
             results = {}
             timeout_fit = extra_params.get('timeout_fit', None)
-            log_and_print_msg('Running...', **combination, **unique_params)
+            log_and_print_msg('Running...', verbose=self.verbose, verbose_level=1, **combination, **unique_params)
             start_time = time.perf_counter()
 
             results['on_train_start_return'] = self._add_elapsed_time(self._on_train_start, combination=combination,
@@ -763,7 +771,8 @@ class BaseExperiment(ABC):
             results['on_train_end_return'] = self._add_elapsed_time(self._on_train_end, combination=combination,
                                                                     unique_params=unique_params,
                                                                     extra_params=extra_params, **kwargs, **results)
-            log_and_print_msg('Finished!', total_elapsed_time=total_elapsed_time, **combination, **unique_params)
+            log_and_print_msg('Finished!', verbose=self.verbose, verbose_level=1,
+                              total_elapsed_time=total_elapsed_time, **combination, **unique_params)
             if return_results:
                 return results
             else:
@@ -810,7 +819,7 @@ class BaseExperiment(ABC):
         possible_existent_run = set_mlflow_tracking_uri_check_if_exists(self.experiment_name, self.mlflow_tracking_uri,
                                                                         self.check_if_exists, **run_unique_params)
         if possible_existent_run is not None:
-            log_and_print_msg('Run already exists on MLflow. Skipping...')
+            log_and_print_msg('Run already exists on MLflow. Skipping...', verbose=self.verbose, verbose_level=1)
             if return_results:
                 return possible_existent_run.to_dict()
             else:
@@ -919,6 +928,9 @@ class BaseExperiment(ABC):
         """Run the experiment."""
 
         combinations, combination_names, unique_params, extra_params = self._get_combinations()
+        log_and_print_msg('Starting experiment...', verbose=self.verbose, verbose_level=1,
+                          combination_names=combination_names, combinations=combinations,
+                          unique_params=unique_params, extra_params=extra_params)
         n_args = len(combinations[0])
 
         total_combinations = len(combinations)
@@ -959,7 +971,7 @@ class BaseExperiment(ABC):
                               f'completion of the tasks right after sending all the tasks to the cluster. '
                               f'Note that this can take a while if a lot of tasks are being submitted. '
                               f'You can check the dask dashboard to get more information about the progress and '
-                              f'the workers.')
+                              f'the workers.', verbose=self.verbose, verbose_level=1)
 
             workers = {str(value['name']): value['resources'] for worker_address, value
                        in client.scheduler_info()['workers'].items()}
@@ -1001,7 +1013,8 @@ class BaseExperiment(ABC):
                         n_combinations_none += 1
                     finished_combinations += 1
                     progress_bar.update(1)
-                    log_and_print_msg(str(progress_bar), succesfully_completed=n_combinations_successfully_completed,
+                    log_and_print_msg(str(progress_bar), verbose=self.verbose, verbose_level=1,
+                                      succesfully_completed=n_combinations_successfully_completed,
                                       failed=n_combinations_failed, none=n_combinations_none)
                     completed_worker_name = completed_future.worker
                     worker = workers[completed_worker_name]
@@ -1032,16 +1045,11 @@ class BaseExperiment(ABC):
                     n_combinations_failed += 1
                 else:
                     n_combinations_none += 1
-                log_and_print_msg(str(progress_bar), succesfully_completed=n_combinations_successfully_completed,
+                log_and_print_msg(str(progress_bar), verbose=self.verbose, verbose_level=1,
+                                  succesfully_completed=n_combinations_successfully_completed,
                                   failed=n_combinations_failed, none=n_combinations_none)
 
         return total_combinations, n_combinations_successfully_completed, n_combinations_failed, n_combinations_none
-
-    def _get_kwargs_to_log_experiment(self):
-        """Get the kwargs to log the experiment."""
-        kwargs_to_log = dict(experiment_name=self.experiment_name, models_nickname=self.models_nickname,
-                             seeds_models=self.seeds_models)
-        return kwargs_to_log
 
     def run(self):
         """Run the entire pipeline."""
@@ -1050,9 +1058,7 @@ class BaseExperiment(ABC):
         if self.save_root_dir:
             os.makedirs(self.save_root_dir, exist_ok=True)
         self._setup_logger()
-        kwargs_to_log = self._get_kwargs_to_log_experiment()
         start_time = time.perf_counter()
-        log_and_print_msg('Starting experiment...', **kwargs_to_log)
         if self.dask_cluster_type is not None:
             client = self._setup_dask(self.n_workers, self.dask_cluster_type, self.dask_address)
         else:
@@ -1060,11 +1066,10 @@ class BaseExperiment(ABC):
         total_combinations, n_combinations_successfully_completed, n_combinations_failed, n_combinations_none = (
             self._run_experiment(client=client))
         total_time = time.perf_counter() - start_time
-        log_and_print_msg('Experiment finished!', total_elapsed_time=total_time,
+        log_and_print_msg('Experiment finished!', verbose=self.verbose, verbose_level=1, total_elapsed_time=total_time,
                           total_combinations=total_combinations,
                           sucessfully_completed=n_combinations_successfully_completed,
-                          failed=n_combinations_failed, none=n_combinations_none,
-                          **kwargs_to_log)
+                          failed=n_combinations_failed, none=n_combinations_none)
 
 
 if __name__ == '__main__':
