@@ -124,6 +124,10 @@ wait
 
 # alternatively we could also run an array job and execute the combination given by the SLURM_ARRAY_TASK_ID
 #i_combination=$SLURM_ARRAY_TASK_ID
+#if [ "$i_combination" -ge "${#cartesian_product[@]}" ]; then
+#  echo "SLURM_ARRAY_TASK_ID is greater than the number of combinations"
+#  exit 1
+#fi
 #string_combination=""
 #IFS='-' read -r -a combination <<< "${cartesian_product[$i_combination]}"
 #i_arg_name=0
