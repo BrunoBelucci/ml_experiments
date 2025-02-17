@@ -292,10 +292,6 @@ class HPOExperiment(BaseExperiment, ABC):
                                 extra_params: Optional[dict] = None, **kwargs):
         raise NotImplementedError('This method must be implemented in the subclass')
 
-    @abstractmethod
-    def _get_tell_metric_from_results(self, results):
-        raise NotImplementedError('This method must be implemented in the subclass')
-
     def _get_tell_metric_from_results(self, results):
         evaluate_model_return = results.get('evaluate_model_return', {})
         hpo_metric = evaluate_model_return.get(self.hpo_metric, None)
