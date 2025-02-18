@@ -119,5 +119,5 @@ def friedman_nemenyi_test(df, model_column, block_column, metric_column, ascendi
         mean_rank = df.groupby(model_column)['rank'].mean()
         return res_friedman, res_nemenyi, mean_rank
     else:
-        print(f'pvalue of {res_friedman.pvalue} is greater than alpha of {alpha}')
+        print(f'pvalue of {res_friedman.pvalue} is greater than 1 - alpha = 1 - {alpha} = {1 - alpha}')
         return res_friedman, None, None
