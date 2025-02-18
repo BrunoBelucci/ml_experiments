@@ -1070,6 +1070,7 @@ class BaseExperiment(ABC):
                           total_combinations=total_combinations,
                           sucessfully_completed=n_combinations_successfully_completed,
                           failed=n_combinations_failed, none=n_combinations_none)
+        logging.shutdown()
 
 
 if __name__ == '__main__':
