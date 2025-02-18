@@ -49,6 +49,9 @@ declare -A array_args_dict=(
 ["seeds_models"]="0 1"
 )
 
+# bash does not necessarily keep the order of the keys in the dictionary, so we will specify the order here
+declare -a array_args_dict_order=("models_nickname" "seeds_models")
+
 # Construct the argument string
 args_str=""
 for key in "${!args_dict[@]}"; do
@@ -68,7 +71,7 @@ done
 # the idea is to create a string like {Model1,Model2}-{0,1} and then evaluate it to get the cartesian product
 # using bash's brace expansion
 string_for_cartesian_product=""
-for key in "${!array_args_dict[@]}"; do
+for key in "${array_args_dict_order[@]}"; do
   str_array=${array_args_dict[$key]}
   n_elements=$(echo $str_array | wc -w)
   str_array=$(echo $str_array | tr ' ' ',')
@@ -101,7 +104,7 @@ for i_combination in "${!cartesian_product[@]}"; do
   # split the string into an array
   IFS='-' read -r -a combination <<< "${cartesian_product[$i_combination]}"
   i_arg_name=0
-  for key in "${!array_args_dict[@]}"; do
+  for key in "${array_args_dict_order[@]}"; do
     string_combination="$string_combination --$key ${combination[$i_arg_name]}"
     i_arg_name=$((i_arg_name+1))
   done
