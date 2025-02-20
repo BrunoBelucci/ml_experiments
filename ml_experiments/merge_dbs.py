@@ -1,8 +1,9 @@
 from sqlalchemy import create_engine, MetaData
+from sqlalchemy.exc import IntegrityError
 import pandas as pd
 
 
-def mlflow_db1_into_db2(db1_url, db2_url, exclude_tables=None):
+def mlflow_db1_into_db2(db1_url, db2_url, exclude_tables=None, try_to_insert_new=False):
     # Possible problems to keep in mind:
     # What if db1 and db2 have the same run_uuid, I don't know if it is possible that mlflow generates the exact
     # run_uuid in two different databases, but it is possible if we are for example merging a database that has already
@@ -53,4 +54,20 @@ def mlflow_db1_into_db2(db1_url, db2_url, exclude_tables=None):
         if table.name in ['runs', 'datasets', 'experiments_tags', 'trace_info']:
             df['experiment_id'] = df['experiment_id'].map(experiments_id_map_db1_to_db2)
 
-        df.to_sql(table.name, db2_engine, if_exists="append", index=False, method="multi")
+        try:
+            df.to_sql(table.name, db2_engine, if_exists="append", index=False, method="multi")
+        except IntegrityError as e:
+            if not try_to_insert_new:
+                pass
+            else:
+                # we will try to identify duplicated rows and insert only the new ones, for this we will read the
+                # table from db2 and compare the run_uuids
+                if 'run_uuid' not in df.columns:
+                    raise ValueError(f"Table {table.name} does not have a run_uuid column")
+                run_uuids_db1 = set(df['run_uuid'])
+                select_query = f"SELECT * FROM {table.name} WHERE run_uuid IN {tuple(run_uuids_db1)}"
+                df_db2 = pd.read_sql_query(select_query, db2_engine)
+                run_uuids_db2 = set(df_db2['run_uuid'])
+                new_run_uuids = run_uuids_db1 - run_uuids_db2
+                df_new = df.loc[df['run_uuid'].isin(new_run_uuids)]
+                df_new.to_sql(table.name, db2_engine, if_exists="append", index=False, method="multi")
