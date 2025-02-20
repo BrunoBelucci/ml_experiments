@@ -17,7 +17,7 @@ def mlflow_db1_into_db2(db1_url, db2_url, exclude_tables=None):
     metadata = MetaData()
     metadata.reflect(bind=db2_engine)
 
-    common_experiments_id_map_db1_to_db2 = {}
+    experiments_id_map_db1_to_db2 = {}
 
     for table in metadata.sorted_tables:
         if exclude_tables and table.name in exclude_tables:
@@ -36,10 +36,21 @@ def mlflow_db1_into_db2(db1_url, db2_url, exclude_tables=None):
             for experiment in common_experiments:
                 experiment_id_db1 = df_db1_experiments.loc[df_db1_experiments['name'] == experiment, 'experiment_id'].values[0]
                 experiment_id_db2 = df_db2_experiments.loc[df_db2_experiments['name'] == experiment, 'experiment_id'].values[0]
-                common_experiments_id_map_db1_to_db2[experiment_id_db1] = experiment_id_db2
+                experiments_id_map_db1_to_db2[experiment_id_db1] = experiment_id_db2
+            # remove common experiments from df
             df = df.loc[~df['name'].isin(common_experiments)]
+            # if name does not exist in db2, we will keep the experiments row from db1, but we will assign a new
+            # experiment_id which will be the max experiment_id in db2 + 1
+            new_experiments = experiments_db1 - experiments_db2
+            max_experiment_id_db2 = df_db2_experiments['experiment_id'].max()
+            for experiment in new_experiments:
+                experiment_id_db1 = df_db1_experiments.loc[df_db1_experiments['name'] == experiment, 'experiment_id'].values[0]
+                max_experiment_id_db2 += 1
+                experiments_id_map_db1_to_db2[experiment_id_db1] = max_experiment_id_db2
+                # assign new experiment_id
+                df.loc[df['name'] == experiment, 'experiment_id'] = max_experiment_id_db2
 
         if table.name in ['runs', 'datasets', 'experiments_tags', 'trace_info']:
-            df['experiment_id'] = df['experiment_id'].map(common_experiments_id_map_db1_to_db2)
+            df['experiment_id'] = df['experiment_id'].map(experiments_id_map_db1_to_db2)
 
         df.to_sql(table.name, db2_engine, if_exists="append", index=False, method="multi")
