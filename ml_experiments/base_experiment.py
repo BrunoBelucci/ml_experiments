@@ -22,6 +22,12 @@ import json
 from abc import ABC, abstractmethod
 from ml_experiments.utils import flatten_dict, get_git_revision_hash, set_mlflow_tracking_uri_check_if_exists
 from func_timeout import func_timeout, FunctionTimedOut
+try:
+    import torch
+    torch_available = True
+except ImportError:
+    torch = None
+    torch_available = False
 
 warnings.simplefilter(action='ignore', category=FutureWarning)
 
@@ -493,6 +499,14 @@ class BaseExperiment(ABC):
 
     def _on_train_start(self, combination: dict, unique_params: Optional[dict] = None,
                         extra_params: Optional[dict] = None, **kwargs):
+        if self.n_gpus_per_task > 0:
+            if torch_available:
+                if torch.cuda.is_available():
+                    torch.cuda.reset_peak_memory_stats()
+                if self.n_gpus_per_task < 1:
+                    # this will supposedly allow to use just a fraction of the gpu memory
+                    # open question: what if we want to use more than one gpu?
+                    torch.cuda.set_per_process_memory_fraction(self.n_gpus_per_task)
         return {}
 
     def _before_load_data(self, combination: dict, unique_params: Optional[dict] = None,
@@ -612,6 +626,11 @@ class BaseExperiment(ABC):
 
         # log memory usage in MB (in linux getrusage seems to returns in KB)
         log_metrics['max_memory_used'] = getrusage(RUSAGE_SELF).ru_maxrss / 1000
+
+        if torch_available:
+            if torch.cuda.is_available():
+                log_metrics['max_cuda_memory_reserved'] = torch.cuda.max_memory_reserved() / (1024 ** 2)  # in MB
+                log_metrics['max_cuda_memory_allocated'] = torch.cuda.max_memory_allocated() / (1024 ** 2)  # in MB
 
         # log exceptions and set run status
         if 'exception' in kwargs:
