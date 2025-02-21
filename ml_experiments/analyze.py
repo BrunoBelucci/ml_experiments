@@ -5,7 +5,17 @@ import scikit_posthocs as sp
 
 
 def get_df_runs_from_mlflow_sql(engine, runs_columns, experiments_columns=None, experiments_names=None,
-                                other_table=None, other_table_keys=None):
+                                other_table=None, other_table_keys=None, pivot_other_table=True):
+    # The query will be like:
+    # SELECT
+    #   runs.run_uuid, runs...,
+    #   experiments.experiment_id, experiments...,
+    #   other_table.key, other_table.value...,
+    # FROM runs
+    # LEFT JOIN experiments ON runs.experiment_id = experiments.experiment_id
+    # LEFT JOIN other_table ON runs.run_uuid = other_table.run_uuid
+    # WHERE experiments.name IN ('experiment_name1', 'experiment_name2') AND other_table.key IN ('key1', 'key2')
+    # If there is an "other_table" we will pivot the table to have the keys as columns by default
     if 'run_uuid' not in runs_columns:
         runs_columns.append('run_uuid')
     if experiments_columns is None:
@@ -23,7 +33,10 @@ def get_df_runs_from_mlflow_sql(engine, runs_columns, experiments_columns=None, 
         query_experiment_columns = ", " + ", ".join(experiment_columns_for_query)
         query += query_experiment_columns
     if other_table:
-        query_other_table_columns = f', {other_table}."key", {other_table}.value'
+        if other_table == 'metrics':
+            query_other_table_columns = f', {other_table}."key", {other_table}.value, {other_table}.step'
+        else:
+            query_other_table_columns = f', {other_table}."key", {other_table}.value'
         query += query_other_table_columns
     query += " FROM runs"
     if experiments_columns or experiments_names:
@@ -44,8 +57,15 @@ def get_df_runs_from_mlflow_sql(engine, runs_columns, experiments_columns=None, 
             query += f' {other_table}."key" IN ({other_table_keys_for_query})'
     df = pd.read_sql(query, engine)
     if other_table_keys:
-        df = df.pivot(columns='key', index=runs_columns + experiments_columns, values='value').reset_index()
-    df = df.set_index('run_uuid')
+        if pivot_other_table:
+            if other_table == 'metrics':
+                df = df.pivot(columns=['key', 'step'], index=runs_columns + experiments_columns, values='value').reset_index()
+                df = df.set_index('run_uuid')
+            else:
+                df = df.pivot(columns='key', index=runs_columns + experiments_columns, values='value').reset_index()
+                df = df.set_index('run_uuid')
+    else:
+        df = df.set_index('run_uuid')
     return df
 
 
