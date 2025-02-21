@@ -83,13 +83,18 @@ class BaseExperiment(ABC):
             # parallelization
             dask_cluster_type: Optional[str] = None,
             n_workers: int = 1,
-            n_processes: int = 1,
-            n_cores: int = 1,
+            n_processes_per_worker: int = 1,
+            n_cores_per_worker: int = 1,
+            n_threads_per_worker: int = 2,
+            n_processes_per_task: int = 0,
+            n_cores_per_task: int = 0,
+            n_threads_per_task: Optional[int] = None,
             dask_memory: Optional[str] = None,
             dask_job_extra_directives: Optional[str] = None,
             dask_address: Optional[str] = None,
             # gpu specific
-            n_gpus: int = 0,
+            n_gpus_per_worker: float = 0.0,
+            n_gpus_per_task: Optional[float] = None,
     ):
         """Base experiment.
 
@@ -147,18 +152,29 @@ class BaseExperiment(ABC):
             that dask will not be used.
         n_workers :
             The number of workers to be used in the dask cluster. Defaults to 1.
-        n_processes :
+        n_processes_per_worker :
             The number of processes to be used in the dask cluster. Defaults to 1.
-        n_cores :
+        n_cores_per_worker :
             The number of cores to be used in the dask cluster. Defaults to 1.
+        n_threads_per_worker :
+            The number of threads to be used in the dask cluster. Defaults to 2.
+        n_processes_per_task :
+            The number of processes per task. Defaults to 0.
+        n_cores_per_task :
+            The number of cores per task. Defaults to 0.
+        n_threads_per_task:
+            The number of threads per task. Defaults to None which sets the number of threads per task to be the same
+            as n_jobs.
         dask_memory :
             The memory to be used in the dask cluster. Defaults to None.
         dask_job_extra_directives :
             The extra directives to be used in the dask cluster. Defaults to None.
         dask_address :
             The address of an initialized dask cluster. Defaults to None.
-        n_gpus :
-            The number of gpus to be used in the dask cluster. Defaults to 0.
+        n_gpus_per_worker :
+            The number of gpus per worker. Defaults to 0.
+        n_gpus_per_task :
+            The number of gpus per task. Defaults to None which uses the same value as n_gpus_per_worker.
         """
         self.models_nickname = models_nickname if models_nickname else []
         self.seeds_models = seeds_models if seeds_models else [0]
@@ -170,12 +186,17 @@ class BaseExperiment(ABC):
         # parallelization
         self.dask_cluster_type = dask_cluster_type
         self.n_workers = n_workers
-        self.n_cores = n_cores
-        self.n_processes = n_processes
+        self.n_cores_per_worker = n_cores_per_worker
+        self.n_processes_per_worker = n_processes_per_worker
+        self.n_threads_per_worker = n_threads_per_worker
+        self.n_processes_per_task = n_processes_per_task
+        self.n_cores_per_task = n_cores_per_task
+        self._n_threads_per_task = n_threads_per_task
         self.dask_memory = dask_memory
         self.dask_job_extra_directives = dask_job_extra_directives
         self.dask_address = dask_address
-        self.n_gpus = n_gpus
+        self.n_gpus_per_worker = n_gpus_per_worker
+        self._n_gpus_per_task = n_gpus_per_task
 
         self.experiment_name = experiment_name
         self.create_validation_set = create_validation_set
@@ -201,6 +222,18 @@ class BaseExperiment(ABC):
         self.verbose = verbose
         self.client = None
         self.logger_filename = None
+
+    @property
+    def n_threads_per_task(self):
+        if self._n_threads_per_task is None:
+            return self.n_jobs
+        return self._n_threads_per_task
+
+    @property
+    def n_gpus_per_task(self):
+        if self._n_gpus_per_task is None:
+            return self.n_gpus_per_worker
+        return self._n_gpus_per_task
 
     @property
     @abstractmethod
@@ -229,7 +262,8 @@ class BaseExperiment(ABC):
                                  nargs='*', default=self.models_nickname)
         self.parser.add_argument('--seeds_models', nargs='*', type=int, default=self.seeds_models)
         self.parser.add_argument('--n_jobs', type=int, default=self.n_jobs,
-                                 help='Number of threads/cores to be used by the model if it supports it. '
+                                 help='Number of threads/cores to be used by the model if it supports it. Usually it is'
+                                      'threads, but can depend on model.'
                                       'Obs.: In the CEREMADE cluster the minimum number of cores that can be requested'
                                       'are 2, so it is a good idea to set at least n_jobs to 2 if we want to use all '
                                       'the resources available.')
@@ -271,22 +305,17 @@ class BaseExperiment(ABC):
         self.parser.add_argument('--dask_cluster_type', type=str, default=self.dask_cluster_type)
         self.parser.add_argument('--n_workers', type=int, default=self.n_workers,
                                  help='Maximum number of workers to be used.')
-        self.parser.add_argument('--n_cores', type=int, default=self.n_cores,
-                                 help='Number of cores per job that will be requested in the cluster. It is ignored'
-                                      'if the cluster type is local.')
-        self.parser.add_argument('--n_processes', type=int, default=self.n_processes,
-                                 help='Number of processes to use when parallelizing with dask.')
+        self.parser.add_argument('--n_cores_per_worker', type=int, default=self.n_cores_per_worker)
+        self.parser.add_argument('--n_processes_per_worker', type=int, default=self.n_processes_per_worker)
+        self.parser.add_argument('--n_threads_per_worker', type=int, default=self.n_threads_per_worker)
+        self.parser.add_argument('--n_processes_per_task', type=int, default=self.n_processes_per_task)
+        self.parser.add_argument('--n_cores_per_task', type=int, default=self.n_cores_per_task)
+        self.parser.add_argument('--n_threads_per_task', type=int, default=self.n_threads_per_task)
         self.parser.add_argument('--dask_memory', type=str, default=self.dask_memory)
         self.parser.add_argument('--dask_job_extra_directives', type=str, default=self.dask_job_extra_directives)
         self.parser.add_argument('--dask_address', type=str, default=self.dask_address)
-        self.parser.add_argument('--n_gpus', type=int, default=self.n_gpus,
-                                 help='Number of GPUs per job that will be requested in the cluster.'
-                                      'Note that this will not allocate the GPU in the cluster, we must still pass '
-                                      'the required resource allocation parameter to the cluster (we can do this via'
-                                      'the dask_job_extra_directives argument, for example with '
-                                      '--dask_job_extra_directives "-G 1"). For the case of a local cluster, it will'
-                                      'be the total number of GPUs that will be used, each worker will have access'
-                                      'to n_gpus / n_workers GPUs.')
+        self.parser.add_argument('--n_gpus_per_worker', type=int, default=self.n_gpus_per_worker)
+        self.parser.add_argument('--n_gpus_per_task', type=int, default=self.n_gpus_per_task)
 
     @abstractmethod
     def _unpack_parser(self):
@@ -320,8 +349,12 @@ class BaseExperiment(ABC):
 
         self.dask_cluster_type = args.dask_cluster_type
         self.n_workers = args.n_workers
-        self.n_cores = args.n_cores
-        self.n_processes = args.n_processes
+        self.n_cores_per_worker = args.n_cores_per_worker
+        self.n_processes_per_worker = args.n_processes_per_worker
+        self.n_threads_per_worker = args.n_threads_per_worker
+        self.n_processes_per_task = args.n_processes_per_task
+        self.n_cores_per_task = args.n_cores_per_task
+        self._n_threads_per_task = args.n_threads_per_task
         self.dask_memory = args.dask_memory
         dask_job_extra_directives = args.dask_job_extra_directives
         # parse dask_job_extra_directives
@@ -338,7 +371,8 @@ class BaseExperiment(ABC):
             dask_job_extra_directives = []
         self.dask_job_extra_directives = dask_job_extra_directives
         self.dask_address = args.dask_address
-        self.n_gpus = args.n_gpus
+        self.n_gpus_per_worker = args.n_gpus_per_worker
+        self._n_gpus_per_task = args.n_gpus_per_task
         return args
 
     def _treat_parser(self):
@@ -377,44 +411,41 @@ class BaseExperiment(ABC):
             # allow multiprocessing with joblib inside dask workers
             dask.config.set({'distributed.worker.daemon': False})
             if cluster_type == 'local':
-                threads_per_worker = self.n_cores
-                processes_per_worker = self.n_processes
-                gpus_per_worker = self.n_gpus / n_workers
-                if n_workers * threads_per_worker > cpu_count():
-                    warnings.warn(f"n_workers * threads_per_worker is greater than the number of cores "
+                if n_workers * self.n_threads_per_worker > cpu_count():
+                    warnings.warn(f"n_workers * n_threads_per_worker is greater than the number of "
+                                  f"cores (checked with cpu_count()) "
                                   f"available ({cpu_count()}). This may lead to performance issues.")
-                resources_per_worker = {'cores': threads_per_worker, 'gpus': gpus_per_worker,
-                                        'processes': processes_per_worker}
+                resources_per_worker = {'cores': self.n_cores_per_worker, 'gpus': self.n_gpus_per_worker,
+                                        'processes': self.n_processes_per_worker, 'threads': self.n_threads_per_worker,
+                                        '_whole_worker': 1}
 
                 # set threads used by numpy / scipy (OpenMP, MKL, OpenBLAS)
-                os.environ['OMP_NUM_THREADS'] = str(threads_per_worker)
-                os.environ['MKL_NUM_THREADS'] = str(threads_per_worker)
-                os.environ['OPENBLAS_NUM_THREADS'] = str(threads_per_worker)
+                os.environ['OMP_NUM_THREADS'] = str(self.n_threads_per_worker)
+                os.environ['MKL_NUM_THREADS'] = str(self.n_threads_per_worker)
+                os.environ['OPENBLAS_NUM_THREADS'] = str(self.n_threads_per_worker)
                 pre_env = {
-                    'distributed.nanny.pre-spawn-environ.OMP_NUM_THREADS': threads_per_worker,
-                    'distributed.nanny.pre-spawn-environ.MKL_NUM_THREADS': threads_per_worker,
-                    'distributed.nanny.pre-spawn-environ.OPENBLAS_NUM_THREADS': threads_per_worker,
+                    'distributed.nanny.pre-spawn-environ.OMP_NUM_THREADS': self.n_threads_per_worker,
+                    'distributed.nanny.pre-spawn-environ.MKL_NUM_THREADS': self.n_threads_per_worker,
+                    'distributed.nanny.pre-spawn-environ.OPENBLAS_NUM_THREADS': self.n_threads_per_worker,
                 }
                 dask.config.set(pre_env)
 
                 cluster = LocalCluster(n_workers=0, memory_limit=self.dask_memory, processes=True,
-                                       threads_per_worker=threads_per_worker, resources=resources_per_worker)
+                                       threads_per_worker=self.n_threads_per_worker, resources=resources_per_worker)
                 cluster.scale(n_workers)
             elif cluster_type == 'slurm':
-                cores_per_worker = self.n_cores
-                processes_per_worker = self.n_processes
-                gpus_per_worker = self.n_gpus
-                resources_per_work = {'cores': cores_per_worker, 'gpus': gpus_per_worker,
-                                      'processes': processes_per_worker}
+                resources_per_work = {'cores': self.n_cores_per_worker, 'gpus': self.n_gpus_per_worker,
+                                      'processes': self.n_processes_per_worker, 'threads': self.n_threads_per_worker,
+                                      '_whole_worker': 1}
 
                 # set threads used by numpy / scipy (OpenMP, MKL, OpenBLAS)
-                os.environ['OMP_NUM_THREADS'] = str(cores_per_worker)
-                os.environ['MKL_NUM_THREADS'] = str(cores_per_worker)
-                os.environ['OPENBLAS_NUM_THREADS'] = str(cores_per_worker)
+                os.environ['OMP_NUM_THREADS'] = str(self.n_threads_per_worker)
+                os.environ['MKL_NUM_THREADS'] = str(self.n_threads_per_worker)
+                os.environ['OPENBLAS_NUM_THREADS'] = str(self.n_threads_per_worker)
                 pre_env = {
-                    'distributed.nanny.pre-spawn-environ.OMP_NUM_THREADS': cores_per_worker,
-                    'distributed.nanny.pre-spawn-environ.MKL_NUM_THREADS': cores_per_worker,
-                    'distributed.nanny.pre-spawn-environ.OPENBLAS_NUM_THREADS': cores_per_worker,
+                    'distributed.nanny.pre-spawn-environ.OMP_NUM_THREADS': self.n_threads_per_worker,
+                    'distributed.nanny.pre-spawn-environ.MKL_NUM_THREADS': self.n_threads_per_worker,
+                    'distributed.nanny.pre-spawn-environ.OPENBLAS_NUM_THREADS': self.n_threads_per_worker,
                 }
                 dask.config.set(pre_env)
 
@@ -428,16 +459,20 @@ class BaseExperiment(ABC):
                     "jobqueue.slurm.worker-extra-args", []
                 )
                 job_extra_directives = job_extra_directives + self.dask_job_extra_directives
-                job_script_prologue = job_script_prologue + [f'export OMP_NUM_THREADS={cores_per_worker}'
-                                                             f'export MKL_NUM_THREADS={cores_per_worker}'
-                                                             f'export OPENBLAS_NUM_THREADS={cores_per_worker}'
+                job_script_prologue = job_script_prologue + [f'export OMP_NUM_THREADS={self.n_threads_per_worker}'
+                                                             f'export MKL_NUM_THREADS={self.n_threads_per_worker}'
+                                                             f'export OPENBLAS_NUM_THREADS={self.n_threads_per_worker}'
                                                              f'eval "$(conda shell.bash hook)"',
                                                              f'conda activate $CONDA_DEFAULT_ENV']
                 resources_per_work_string = ' '.join([f'{key}={value}' for key, value in resources_per_work.items()])
                 worker_extra_args = worker_extra_args + [f'--resources "{resources_per_work_string}"']
                 walltime = '364-23:59:59'
                 job_name = f'dask-worker-{self.experiment_name}'
-                cluster = SLURMCluster(cores=cores_per_worker, memory=self.dask_memory, processes=processes_per_worker,
+                # some slurm clusters are configured to use cores=cores and others cores=threads, which makes it really
+                # difficult to know how to spawn a new job and what do we want, we will have to manually adjust
+                # resource_per_worker and resource_per_task to correctly use this implementation in each slurm cluster
+                cluster = SLURMCluster(cores=self.n_cores_per_worker, memory=self.dask_memory,
+                                       processes=self.n_processes_per_worker,
                                        job_extra_directives=job_extra_directives,
                                        job_script_prologue=job_script_prologue, walltime=walltime,
                                        job_name=job_name, worker_extra_args=worker_extra_args)
@@ -785,12 +820,17 @@ class BaseExperiment(ABC):
             # dask parameters
             dask_cluster_type=self.dask_cluster_type,
             n_workers=self.n_workers,
-            n_cores=self.n_cores,
-            n_processes=self.n_processes,
+            n_cores_per_worker=self.n_cores_per_worker,
+            n_processes_per_worker=self.n_processes_per_worker,
+            n_threads_per_worker=self.n_threads_per_worker,
+            n_processes_per_task=self.n_processes_per_task,
+            n_cores_per_task=self.n_cores_per_task,
+            n_threads_per_task=self.n_threads_per_task,
             dask_memory=self.dask_memory,
             dask_job_extra_directives=self.dask_job_extra_directives,
             dask_address=self.dask_address,
-            n_gpus=self.n_gpus,
+            n_gpus_per_worker=self.n_gpus_per_worker,
+            n_gpus_per_task=self.n_gpus_per_task,
         ))
         tags_to_log = dict(
             # slurm parameters
@@ -942,7 +982,7 @@ class BaseExperiment(ABC):
             list_of_args = [[combination[i] for combination in combinations[1:]] for i in range(n_args)]
             # we will first create the mlflow runs to avoid threading problems
             if self.log_to_mlflow:
-                resources_per_task = {'processes': 1}
+                resources_per_task = {'whole_worker': 1}  # ensure 1 worker creates 1 run
                 first_future = client.submit(self._create_mlflow_run, *first_args, resources=resources_per_task,
                                              pure=False, combination_names=combination_names,
                                              unique_params=unique_params, extra_params=extra_params)
@@ -963,9 +1003,11 @@ class BaseExperiment(ABC):
                 combination_names.append('mlflow_run_id')
             if hasattr(self, 'n_trials'):
                 # the resources are actually used when training the models, here we will launch the hpo framework
-                resources_per_task = {'cores': 0, 'gpus': 0, 'processes': 1}
+                # so we ensure that each worker launches only one hpo run
+                resources_per_task = {'threads': 0, 'cores': 0, 'gpus': 0, 'processes': 0, 'whole_worker': 1}
             else:
-                resources_per_task = {'cores': self.n_jobs, 'gpus': self.n_gpus / (self.n_cores / self.n_jobs)}
+                resources_per_task = {'threads': self.n_threads_per_task, 'cores': self.n_cores_per_task,
+                                      'gpus': self.n_gpus_per_worker, 'processes': self.n_processes_per_task}
             log_and_print_msg(f'{total_combinations} models are being trained and evaluated in parallel, '
                               f'check the logs for real time information. We will display information about the '
                               f'completion of the tasks right after sending all the tasks to the cluster. '

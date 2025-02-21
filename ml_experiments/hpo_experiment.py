@@ -372,9 +372,11 @@ class HPOExperiment(BaseExperiment, ABC):
                                 search_space, study, model_params, fit_params, combination, child_run_id, random_state
                             )
                             trial_numbers.append(trial.number)
-                            resources = {'cores': self.n_jobs, 'gpus': self.n_gpus / (self.n_cores / self.n_jobs)}
+                            resources_per_task = {'threads': self.n_threads_per_task, 'cores': self.n_cores_per_task,
+                                                  'gpus': self.n_gpus_per_worker,
+                                                  'processes': self.n_processes_per_task}
                             futures.append(
-                                client.submit(self._training_fn, resources=resources, key=trial_key, pure=False,
+                                client.submit(self._training_fn, resources=resources_per_task, key=trial_key, pure=False,
                                               single_experiment=single_experiment, trial_combination=trial_combination,
                                               optuna_trial=trial, unique_params=unique_params,
                                               extra_params=extra_params, **kwargs)
