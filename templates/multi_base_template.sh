@@ -24,12 +24,17 @@ declare -A args_dict=(
 ["mlflow_tracking_uri"]=""
 ["dask_cluster_type"]=""
 ["n_workers"]=""
-["n_cores"]=""
-["n_processes"]=""
+["n_cores_per_worker"]=""
+["n_processes_per_worker"]=""
+["n_threads_per_worker"]=""
+["n_cores_per_task"]=""
+["n_processes_per_task"]=""
+["n_threads_per_task"]=""
 ["dask_memory"]=""
 ["dask_job_extra_directives"]=""
 ["dask_address"]=""
-["n_gpus"]=""
+["n_gpus_per_worker"]=""
+["n_gpus_per_task"]=""
 )
 
 declare -A bool_args_dict=(
