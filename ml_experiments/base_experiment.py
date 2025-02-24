@@ -320,8 +320,8 @@ class BaseExperiment(ABC):
         self.parser.add_argument('--dask_memory', type=str, default=self.dask_memory)
         self.parser.add_argument('--dask_job_extra_directives', type=str, default=self.dask_job_extra_directives)
         self.parser.add_argument('--dask_address', type=str, default=self.dask_address)
-        self.parser.add_argument('--n_gpus_per_worker', type=int, default=self.n_gpus_per_worker)
-        self.parser.add_argument('--n_gpus_per_task', type=int, default=self.n_gpus_per_task)
+        self.parser.add_argument('--n_gpus_per_worker', type=float, default=self.n_gpus_per_worker)
+        self.parser.add_argument('--n_gpus_per_task', type=float, default=self.n_gpus_per_task)
 
     @abstractmethod
     def _unpack_parser(self):
