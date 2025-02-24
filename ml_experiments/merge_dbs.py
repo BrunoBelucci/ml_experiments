@@ -1,20 +1,16 @@
-from sqlalchemy import create_engine, MetaData
+from sqlalchemy import MetaData
 from sqlalchemy.exc import IntegrityError
 import pandas as pd
 
 
-def mlflow_db1_into_db2(db1_url, db2_url, exclude_tables=None, try_to_insert_new=False):
+def mlflow_db1_into_db2(db1_engine, db2_engine, exclude_tables=None, try_to_insert_new=False):
     # Possible problems to keep in mind:
     # What if db1 and db2 have the same run_uuid, I don't know if it is possible that mlflow generates the exact
     # run_uuid in two different databases, but it is possible if we are for example merging a database that has already
     # been merged. For now this will fail, and we will have to manually handle this case.
     if exclude_tables is None:
         exclude_tables = ['alembic_version']
-    # Create db_1 engine
-    db1_engine = create_engine(db1_url)
 
-    # Create the db_2 engine
-    db2_engine = create_engine(db2_url)
     metadata = MetaData()
     metadata.reflect(bind=db2_engine)
 
