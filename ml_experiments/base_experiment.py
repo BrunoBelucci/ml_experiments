@@ -1001,7 +1001,7 @@ class BaseExperiment(ABC):
             list_of_args = [[combination[i] for combination in combinations[1:]] for i in range(n_args)]
             # we will first create the mlflow runs to avoid threading problems
             if self.log_to_mlflow:
-                resources_per_task = {'whole_worker': 1}  # ensure 1 worker creates 1 run
+                resources_per_task = {'_whole_worker': 1}  # ensure 1 worker creates 1 run
                 first_future = client.submit(self._create_mlflow_run, *first_args, resources=resources_per_task,
                                              pure=False, combination_names=combination_names,
                                              unique_params=unique_params, extra_params=extra_params)
@@ -1023,7 +1023,7 @@ class BaseExperiment(ABC):
             if hasattr(self, 'n_trials'):
                 # the resources are actually used when training the models, here we will launch the hpo framework
                 # so we ensure that each worker launches only one hpo run
-                resources_per_task = {'threads': 0, 'cores': 0, 'gpus': 0, 'processes': 0, 'whole_worker': 1}
+                resources_per_task = {'threads': 0, 'cores': 0, 'gpus': 0, 'processes': 0, '_whole_worker': 1}
             else:
                 resources_per_task = {'threads': self.n_threads_per_task, 'cores': self.n_cores_per_task,
                                       'gpus': self.n_gpus_per_worker, 'processes': self.n_processes_per_task}
