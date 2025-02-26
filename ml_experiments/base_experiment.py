@@ -595,10 +595,7 @@ class BaseExperiment(ABC):
         if self.save_root_dir:
             # copy work_dir to save_dir
             if mlflow_run_id is not None:
-                with tempfile.TemporaryDirectory() as temp_dir:
-                    temp_dir = Path(temp_dir)
-                    copytree(work_dir, temp_dir, dirs_exist_ok=True)
-                    mlflow.log_artifacts(str(temp_dir), artifact_path='work_dir', run_id=mlflow_run_id)
+                mlflow.log_artifacts(work_dir, artifact_path='work_dir', run_id=mlflow_run_id)
             else:
                 save_dir = self.save_root_dir / work_dir.name
                 copytree(work_dir, save_dir, dirs_exist_ok=True)
