@@ -437,7 +437,8 @@ class BaseExperiment(ABC):
                 dask.config.set(pre_env)
 
                 cluster = LocalCluster(n_workers=0, memory_limit=self.dask_memory, processes=True,
-                                       threads_per_worker=self.n_threads_per_worker, resources=resources_per_worker)
+                                       threads_per_worker=self.n_threads_per_worker, resources=resources_per_worker,
+                                       local_directory=self.work_root_dir)
                 cluster.scale(n_workers)
             elif cluster_type == 'slurm':
                 resources_per_work = {'cores': self.n_cores_per_worker, 'gpus': self.n_gpus_per_worker,
