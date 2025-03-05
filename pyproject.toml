@@ -30,6 +30,11 @@ classifiers = [
 dependencies = [
     "numpy",
     "scikit-learn",
+    "scikit-posthocs",
+    "pandas",
+    "matplotlib",
+    "seaborn",
+    "plotly",
     "mlflow",
     "psycopg2",
     "ipykernel",
@@ -38,15 +43,10 @@ dependencies = [
     "distributed",
     "dask-jobqueue",
     "tqdm",
-    "openml",
     "optuna",
+    "openml",
     "optuna-integration",
-    "func-timeout",
-    "scikit-posthocs",
-    "matplotlib",
-    "seaborn",
-    "plotly",
-    "pandas"
+    "func-timeout"
 ]
 
 [project.urls]

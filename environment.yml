@@ -9,11 +9,8 @@ dependencies:
   - matplotlib
   - seaborn
   - plotly
-  - pandas
   - mlflow
-  - postgresql
   - psycopg2
-  - pytest
   - ipykernel
   - ipywidgets
   - dask
@@ -21,6 +18,8 @@ dependencies:
   - dask-jobqueue
   - tqdm
   - optuna
+  - postgresql
+  - pytest
   - pip
   - pip:
     - -e .
