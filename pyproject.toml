@@ -31,6 +31,7 @@ dependencies = [
     "numpy",
     "scikit-learn",
     "mlflow",
+    "psycopg2",
     "ipykernel",
     "ipywidgets",
     "dask",
