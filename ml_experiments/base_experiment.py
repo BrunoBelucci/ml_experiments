@@ -1004,18 +1004,20 @@ class BaseExperiment(ABC):
                 first_future = client.submit(self._create_mlflow_run, *first_args, resources=resources_per_task,
                                              pure=False, combination_names=combination_names,
                                              unique_params=unique_params, extra_params=extra_params)
-                futures = [first_future]
+                # The following line will block the execution until the first future is completed, ensuring that we
+                # have created the database, experiment, directories, etc
+                first_mlflow_run_id = client.gather(first_future)
+                first_future.release()
+                mlflow_run_ids = [first_mlflow_run_id]
                 if total_combinations > 1:
-                    # we will wait a bit in case we need to create the experiment, directories, etc
-                    time.sleep(5)
                     other_futures = client.map(self._create_mlflow_run, *list_of_args, pure=False,
                                                batch_size=self.n_workers, resources=resources_per_task,
                                                combination_names=combination_names,
                                                unique_params=unique_params, extra_params=extra_params)
-                    futures.extend(other_futures)
-                mlflow_run_ids = client.gather(futures)
-                for future in futures:
-                    future.release()  # release the memory of the future
+                    other_mlflow_run_ids = client.gather(other_futures)
+                    mlflow_run_ids.extend(other_mlflow_run_ids)
+                    for future in other_futures:
+                        future.release()  # release the memory of the future
                 combinations = [list(combination) + [run_id]
                                 for combination, run_id in zip(combinations, mlflow_run_ids)]
                 combination_names.append('mlflow_run_id')
