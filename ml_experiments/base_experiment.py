@@ -305,7 +305,6 @@ class BaseExperiment(ABC):
         self.parser.add_argument('--do_not_log_to_mlflow', action='store_true')
         self.parser.add_argument('--mlflow_tracking_uri', type=str, default=self.mlflow_tracking_uri)
         self.parser.add_argument('--do_not_check_if_exists', action='store_true')
-        self.parser.add_argument('--do_not_retry_on_oom', action='store_true')
         self.parser.add_argument('--raise_on_fit_error', action='store_true')
 
         self.parser.add_argument('--dask_cluster_type', type=str, default=self.dask_cluster_type)
@@ -330,6 +329,7 @@ class BaseExperiment(ABC):
         self.experiment_name = args.experiment_name
         self.create_validation_set = args.create_validation_set
         self.models_nickname = args.models_nickname
+        self.seeds_models = args.seeds_models
         self.n_jobs = args.n_jobs
         models_params = args.models_params
         self.models_params = self._validate_dict_of_models_params(models_params, self.models_nickname)
