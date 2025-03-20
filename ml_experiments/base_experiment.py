@@ -1094,11 +1094,12 @@ class BaseExperiment(ABC):
         else:
             progress_bar = tqdm(combinations, desc='Combinations completed')
             for combination in progress_bar:
-                run_id = self._create_mlflow_run(*combination, combination_names=combination_names,
-                                                 unique_params=unique_params, extra_params=extra_params)
-                combination_with_run_id = list(combination) + [run_id]
-                combination_names.append('mlflow_run_id')
-                combination_success = self._run_combination(*combination_with_run_id,
+                if self.log_to_mlflow:
+                    run_id = self._create_mlflow_run(*combination, combination_names=combination_names,
+                                                     unique_params=unique_params, extra_params=extra_params)
+                    combination = list(combination) + [run_id]
+                    combination_names.append('mlflow_run_id')
+                combination_success = self._run_combination(*combination,
                                                             combination_names=combination_names,
                                                             unique_params=unique_params, extra_params=extra_params)
                 if combination_success is True:
