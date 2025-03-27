@@ -101,6 +101,8 @@ class BaseExperiment(ABC):
             # gpu specific
             n_gpus_per_worker: float = 0.0,
             n_gpus_per_task: Optional[float] = None,
+            # combination
+            combinations: Optional[list[tuple]] = None,
     ):
         """Base experiment.
 
@@ -203,6 +205,8 @@ class BaseExperiment(ABC):
         self.dask_address = dask_address
         self.n_gpus_per_worker = n_gpus_per_worker
         self._n_gpus_per_task = n_gpus_per_task
+
+        self.combinations = combinations
 
         self.experiment_name = experiment_name
         self.create_validation_set = create_validation_set
@@ -321,6 +325,7 @@ class BaseExperiment(ABC):
         self.parser.add_argument('--dask_address', type=str, default=self.dask_address)
         self.parser.add_argument('--n_gpus_per_worker', type=float, default=self.n_gpus_per_worker)
         self.parser.add_argument('--n_gpus_per_task', type=float, default=self.n_gpus_per_task)
+        self.parser.add_argument('--combinations', type=json.loads, default=self.combinations)
 
     @abstractmethod
     def _unpack_parser(self):
@@ -379,6 +384,7 @@ class BaseExperiment(ABC):
         self.dask_address = args.dask_address
         self.n_gpus_per_worker = args.n_gpus_per_worker
         self._n_gpus_per_task = args.n_gpus_per_task
+        self.combinations = args.combinations
         return args
 
     def _treat_parser(self):
