@@ -117,5 +117,6 @@ for i_combination in "${!cartesian_product[@]}"; do
   done
   # string_combination is now like "--models_nickname Model1 --seeds_models 0 1"
   # Run the python command
+  echo "Running the following comand: python $experiment_python_location $args_str $string_combination"
   python $experiment_python_location $args_str $string_combination
 done

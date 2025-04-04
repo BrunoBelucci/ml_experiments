@@ -10,6 +10,14 @@
 #SBATCH --gres=mps:%OF_GPUS -> delete if not using GPUs, use either this line or the previous one
 #SBATCH --array=START-END:STEP%N_SIMULTANEOUS -> delete if not using array jobs
 
+# if we want to run multiple array jobs and overcome the limitation of slurm on the maximum number of jobs
+array_start=0
+array_end=500
+array_step=1
+array_simultaneous=50
+array_batch=50
+script_path="path/to/sbatch/script"
+
 # then copy another template or modify this one accordingly
 environment_name=""
 experiment_python_location=""
@@ -111,39 +119,51 @@ IFS=' ' read -r -a cartesian_product <<< "$cartesian_product"
 eval "$(conda shell.bash hook)"
 conda activate $environment_name
 
-# Run one python command for each combination in the cartesian product
-for i_combination in "${!cartesian_product[@]}"; do
-  string_combination=""
-  # split the string into an array
-  IFS='+' read -r -a combination <<< "${cartesian_product[$i_combination]}"
-  i_arg_name=0
-  for key in "${array_args_dict_order[@]}"; do
-    value=${combination[$i_arg_name]//[-]/ }  # replace '-' by ' '
-    string_combination="${string_combination} --${key} ${value}"
-    i_arg_name=$((i_arg_name+1))
-  done
-  # string_combination is now like "--models_nickname Model1 --seeds_models 0 1"
-  # Run the python command
-  #  python $experiment_python_location $args_str $string_combination
-  # or run it with srun to run one step
-  # exclusive to avoid conflicts with other job steps and -n 1 to run only one task with the specified number of cores
-  # note the & at the end to run the command in the background and allow parallel execution of multiple combinations
-  srun --exclusive -n 1 -c $SLURM_CPUS_PER_TASK python $experiment_python_location $args_str $string_combination &
-done
-wait
+# Run one python command for each combination in the cartesian product with srun
+#for i_combination in "${!cartesian_product[@]}"; do
+#  string_combination=""
+#  # split the string into an array
+#  IFS='+' read -r -a combination <<< "${cartesian_product[$i_combination]}"
+#  i_arg_name=0
+#  for key in "${array_args_dict_order[@]}"; do
+#    value=${combination[$i_arg_name]//[-]/ }  # replace '-' by ' '
+#    string_combination="${string_combination} --${key} ${value}"
+#    i_arg_name=$((i_arg_name+1))
+#  done
+#  # string_combination is now like "--models_nickname Model1 --seeds_models 0 1"
+#  # Run the python command
+#  #  python $experiment_python_location $args_str $string_combination
+#  # or run it with srun to run one step
+#  # exclusive to avoid conflicts with other job steps and -n 1 to run only one task with the specified number of cores
+#  # note the & at the end to run the command in the background and allow parallel execution of multiple combinations
+#  srun --exclusive -n 1 -c $SLURM_CPUS_PER_TASK python $experiment_python_location $args_str $string_combination &
+#done
+#wait
 
 # alternatively we could also run an array job and execute the combination given by the SLURM_ARRAY_TASK_ID
-#i_combination=$SLURM_ARRAY_TASK_ID
-#if [ "$i_combination" -ge "${#cartesian_product[@]}" ]; then
-#  echo "SLURM_ARRAY_TASK_ID is greater than the number of combinations"
-#  exit 1
-#fi
-#string_combination=""
-#IFS='+' read -r -a combination <<< "${cartesian_product[$i_combination]}"
-#i_arg_name=0
-#for key in "${array_args_dict_order[@]}"; do
-#  value=${combination[$i_arg_name]//[-]/ }  # replace '-' by ' '
-#  string_combination="$string_combination --$key ${value}"
-#  i_arg_name=$((i_arg_name+1))
-#done
-#srun --exclusive -n 1 -c $SLURM_CPUS_PER_TASK python $experiment_python_location $args_str $string_combination
+i_combination=$SLURM_ARRAY_TASK_ID
+if [ "$i_combination" -ge "${#cartesian_product[@]}" ]; then
+  echo "SLURM_ARRAY_TASK_ID is greater than the number of combinations"
+  exit 1
+fi
+string_combination=""
+IFS='+' read -r -a combination <<< "${cartesian_product[$i_combination]}"
+i_arg_name=0
+for key in "${array_args_dict_order[@]}"; do
+  value=${combination[$i_arg_name]//[-]/ }  # replace '-' by ' '
+  string_combination="$string_combination --$key ${value}"
+  i_arg_name=$((i_arg_name+1))
+done
+echo "Running the following comand: python $experiment_python_location $args_str $string_combination"
+srun --exclusive -n 1 -c $SLURM_CPUS_PER_TASK python $experiment_python_location $args_str $string_combination
+
+# If we are at the last array task, submit the next array job
+if [ "$SLURM_ARRAY_TASK_ID" -eq "$SLURM_ARRAY_TASK_MAX" ]; then
+  next_array_start=$(($SLURM_ARRAY_TASK_MIN+array_batch))
+  # next_array_end will be the minimum between array_end and next_array_start+array_batch
+  next_array_end=$(( array_end < next_array_start+array_batch ? array_end : next_array_start+array_batch ))
+  # if next_array_start <= array_end, then we submit job, otherwise we are done
+  if [ "$next_array_start" -le "$next_array_end" ]; then
+    sbatch --array=$next_array_start-$next_array_end:$array_step%$array_simultaneous $script_path
+  fi
+fi
