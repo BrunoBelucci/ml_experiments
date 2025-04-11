@@ -596,7 +596,6 @@ class BaseExperiment(ABC):
                               mlflow_run_id=mlflow_run_id, **kwargs)
 
         # save and/or clean work_dir
-        mlflow_run_id = extra_params.get('mlflow_run_id', None)
         work_dir = self.get_local_work_dir(combination, mlflow_run_id, unique_params)
         if self.save_root_dir:
             # copy work_dir to save_dir
@@ -627,6 +626,11 @@ class BaseExperiment(ABC):
                 elapsed_time = value.get('elapsed_time', None)
                 if elapsed_time is not None:
                     log_metrics[key + '_elapsed_time'] = elapsed_time
+
+        # log evaluation results
+        eval_results_dict = kwargs.get('evaluate_model_return', {}).copy()
+        eval_results_dict.pop('elapsed_time', None)
+        log_metrics.update(eval_results_dict)
 
         # log memory usage in MB (in linux getrusage seems to returns in KB)
         log_metrics['max_memory_used'] = getrusage(RUSAGE_SELF).ru_maxrss / 1000
@@ -837,9 +841,17 @@ class BaseExperiment(ABC):
                 return True
 
     def _log_base_experiment_start_params(self, mlflow_run_id, **run_unique_params):
+        if torch_available:
+            if torch.cuda.is_available():
+                cuda_available = True
+            else:
+                cuda_available = False
+        else:
+            cuda_available = False
         params_to_log = flatten_dict(run_unique_params).copy()
         params_to_log.update(dict(
             git_hash=get_git_revision_hash(),
+            cuda_available=cuda_available,
             # dask parameters
             dask_cluster_type=self.dask_cluster_type,
             n_workers=self.n_workers,
