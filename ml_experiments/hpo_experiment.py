@@ -236,6 +236,7 @@ class HPOExperiment(BaseExperiment, ABC):
         # we actually need to consider parent_run_id as a unique parameter, because it will be used
         # exclusively for the parent_run, we cannot use a run from another parent_run for hpo
         unique_params['parent_run_id'] = parent_run_id
+        work_dir = self.get_local_work_dir(trial_combination, trial_combination['mlflow_run_id'], unique_params)
         if timeout_trial == 0:
             results = single_experiment._run_combination(*combination_values, combination_names=combination_names,
                                                          unique_params=unique_params,
@@ -256,8 +257,8 @@ class HPOExperiment(BaseExperiment, ABC):
                 results = {'evaluate_model_return': {}}
 
         # we do not need to keep all the results (data, model...), only the evaluation results
-        child_run_id = trial_combination.get('mlflow_run_id', None)
-        keep_results = {'evaluate_model_return': results['evaluate_model_return'], 'child_run_id': child_run_id}
+        keep_results = {'evaluate_model_return': results['evaluate_model_return'],
+                        'trial_combination': trial_combination, 'work_dir': work_dir}
         return keep_results
 
     def _get_optuna_params(self, search_space, study, model_params, fit_params, combination, child_run_id,
@@ -296,7 +297,8 @@ class HPOExperiment(BaseExperiment, ABC):
         evaluate_model_return = results.get('evaluate_model_return', {})
         hpo_metric = evaluate_model_return.get(self.hpo_metric, None)
         if hpo_metric is None:
-            warn(f'hpo_metric {self.hpo_metric} not found in evaluate_model_return')
+            warn(f'hpo_metric {self.hpo_metric} not found in evaluate_model_return, available metrics are '
+                 f'{evaluate_model_return.keys()}')
             if self.direction == 'maximize':
                 return -float('inf')
             else:
@@ -395,11 +397,7 @@ class HPOExperiment(BaseExperiment, ABC):
                     for trial_number, result in zip(trial_numbers, results):
                         study_id = storage.get_study_id_from_name(study.study_name)
                         trial_id = storage.get_trial_id_from_study_id_trial_number(study_id, trial_number)
-                        child_run_id = result['child_run_id']
-                        storage.set_trial_user_attr(trial_id, 'child_run_id', child_run_id)
-                        eval_result = result['evaluate_model_return']
-                        for metric, value in eval_result.items():
-                            storage.set_trial_user_attr(trial_id, metric, value)
+                        storage.set_trial_user_attr(trial_id, 'result', result)
                         try:
                             study.tell(trial_number, self._get_tell_metric_from_results(result))
                         except RuntimeError:  # handle stop of grid search
@@ -409,6 +407,7 @@ class HPOExperiment(BaseExperiment, ABC):
                             pass
                         pbar.update(1)
                         if parent_run_id:
+                            eval_result = result['evaluate_model_return'].copy()
                             eval_result.pop('elapsed_time', None)
                             mlflow.log_metrics(eval_result, run_id=parent_run_id, step=trial_number)
                     elapsed_time = time.perf_counter() - start_time
@@ -424,11 +423,7 @@ class HPOExperiment(BaseExperiment, ABC):
                     result = self._training_fn(single_experiment=single_experiment, trial_combination=trial_combination,
                                                optuna_trial=trial, unique_params=unique_params,
                                                extra_params=extra_params, **kwargs)
-                    child_run_id = result['child_run_id']
-                    trial.set_user_attr('child_run_id', child_run_id)
-                    eval_result = result['evaluate_model_return']
-                    for metric, value in eval_result.items():
-                        trial.set_user_attr(metric, value)
+                    trial.set_user_attr('result', result)
                     try:
                         study.tell(trial, self._get_tell_metric_from_results(result))
                     except RuntimeError:  # handle stop of grid search
@@ -438,6 +433,7 @@ class HPOExperiment(BaseExperiment, ABC):
                         pass
                     pbar.update(1)
                     if parent_run_id:
+                        eval_result = result['evaluate_model_return'].copy()
                         eval_result.pop('elapsed_time', None)
                         mlflow.log_metrics(eval_result, run_id=parent_run_id, step=trial.number)
                     n_trial += 1
@@ -477,21 +473,29 @@ class HPOExperiment(BaseExperiment, ABC):
         else:
             raise NotImplementedError(f'HPO framework {self.hpo_framework} not implemented')
 
+    def _get_metrics(self, combination: dict, unique_params: Optional[dict] = None,
+                     extra_params: Optional[dict] = None, **kwargs):
+        return {}
+
     def _evaluate_model(self, combination: dict, unique_params: Optional[dict] = None,
                         extra_params: Optional[dict] = None, **kwargs):
         study = kwargs['load_model_return']['study']
 
         best_trial = study.best_trial
-        best_metric_results = {f'best_{metric}': value for metric, value in best_trial.user_attrs.items()
-                               if not metric.startswith('elapsed_') and not metric.startswith('child_run_id')}
+        best_trial_result = best_trial.user_attrs.get('result', dict())
+        best_evaluate_model_return = best_trial_result.get('evaluate_model_return', dict())
+        best_metric_results = {f'best_{metric}': value for metric, value in best_evaluate_model_return.items()
+                               if not metric.startswith('elapsed_')}
         # if best_metric_results is empty it means that every trial failed, we will raise an exception
         if not best_metric_results:
             raise ValueError('Every trial failed, no best model was found')
 
         mlflow_run_id = extra_params.get('mlflow_run_id', None)
         if mlflow_run_id is not None:
-            best_model_params = best_trial.params.copy()
-            best_model_params['best_child_run_id'] = best_trial.user_attrs.get('child_run_id', None)
+            best_trial_combination = best_trial_result.get('trial_combination', dict())
+            best_model_params = best_trial_combination.get('model_params', dict())
+            best_model_params['best_child_run_id'] = best_trial_combination.get('mlflow_run_id', None)
+            best_model_params['seed_model'] = best_trial_combination.get('seed_model', None)
             mlflow_client = mlflow.client.MlflowClient(tracking_uri=self.mlflow_tracking_uri)
             for tag, value in best_model_params.items():
                 mlflow_client.set_tag(mlflow_run_id, tag, value)
