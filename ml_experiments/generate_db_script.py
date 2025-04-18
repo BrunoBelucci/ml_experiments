@@ -71,7 +71,7 @@ if __name__ == '__main__':
     parser.add_argument('--db_port', type=int, default=5001)
     parser.add_argument('--mlflow_port', type=int, default=5002)
     parser.add_argument('--generate_sbatch', type=bool, default=True)
-    parser.add_argument('--n_cores', type=int, default=6)
+    parser.add_argument('--n_cores_per_worker', type=int, default=6)
     parser.add_argument('--clust_name', type=str, default='clust9')
     parser.add_argument('--output_job_file', type=str)
     parser.add_argument('--error_job_file', type=str)

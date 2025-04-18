@@ -127,13 +127,18 @@ def get_dfs_means_stds_both(df, column_model_name, column_task_id, column_datase
     return dfs[0], dfs[1], both
 
 
-def friedman_nemenyi_test(df, model_column, block_column, metric_column, ascending_rank=False, alpha=0.95):
+def friedman_nemenyi_test(df, model_column, block_column, metric_column, ascending_rank=False, alpha=0.95,
+                          block_id_column=None):
     df = df.copy()
     groups = [df.loc[df[model_column] == model, metric_column] for model in pd.unique(df[model_column])]
     res_friedman = friedmanchisquare(*groups)
     if res_friedman.pvalue < 1 - alpha:
-        res_nemenyi = sp.posthoc_nemenyi_friedman(df, y_col=metric_column, block_col=block_column,
-                                                  group_col=model_column, melted=True)
+        if block_id_column:
+            res_nemenyi = sp.posthoc_nemenyi_friedman(df, y_col=metric_column, block_col=block_column,
+                                                      group_col=model_column, melted=True, block_id_col=block_id_column)
+        else:
+            res_nemenyi = sp.posthoc_nemenyi_friedman(df, y_col=metric_column, block_col=block_column,
+                                                      group_col=model_column, melted=True)
         ranks = df.groupby([block_column])[metric_column].rank(ascending=ascending_rank)
         df['rank'] = ranks
         mean_rank = df.groupby(model_column)['rank'].mean()
