@@ -25,6 +25,39 @@ def flatten_dict(dct, parent_key='', sep='/'):
     return dict(items)
 
 
+def unflatten_dict(dct, sep='/'):
+    """
+    Unflatten a dictionary.
+
+    Parameters:
+    dct (dict): Dictionary to be unflattened.
+    sep (str): Separator used between keys.
+
+    Returns:
+    dict: Unflattened dictionary.
+    """
+    result = {}
+    for k, v in dct.items():
+        keys = k.split(sep)
+        d = result
+        for key in keys[:-1]:
+            if key not in d:
+                d[key] = {}
+            d = d[key]
+        d[keys[-1]] = v
+    return result
+
+
+def update_recursively(dct_1, dct_2):
+    """Update dictionary dct_1 with values from dct_2, recursively."""
+    for key, value in dct_2.items():
+        if isinstance(value, dict):
+            dct_1[key] = update_recursively(dct_1.get(key, {}), value)
+        else:
+            dct_1[key] = value
+    return dct_1
+
+
 def get_git_revision_hash() -> str:
     try:
         return subprocess.check_output(['git', 'rev-parse', 'HEAD']).decode('ascii').strip()
