@@ -534,7 +534,10 @@ class HPOExperiment(BaseExperiment, ABC):
         parent_run_id = super()._create_mlflow_run(*combination, combination_names=combination_names,
                                                    unique_params=unique_params, extra_params=extra_params)
         mlflow_client = mlflow.client.MlflowClient(tracking_uri=self.mlflow_tracking_uri)
-        experiment_id = mlflow_client.get_experiment_by_name(self.experiment_name).experiment_id
+        experiment = mlflow_client.get_experiment_by_name(self.experiment_name)
+        if experiment is None:
+            raise ValueError(f'Experiment {self.experiment_name} not found in mlflow')
+        experiment_id = experiment.experiment_id
         # we will initialize the nested runs from the trials
         for trial in range(self.n_trials):
             run = mlflow_client.create_run(experiment_id, tags={MLFLOW_PARENT_RUN_ID: parent_run_id})
