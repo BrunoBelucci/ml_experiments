@@ -7,7 +7,8 @@ from optuna.storages import BaseStorage, InMemoryStorage
 from optuna_integration import DaskStorage
 from time import perf_counter
 from tqdm.auto import tqdm
-from ml_experiments.utils import flatten_dict, unflatten_dict, update_recursively
+from ml_experiments.utils import flatten_dict
+from dask.distributed import Client
 
 
 class OptunaTuner(ABC):
@@ -21,7 +22,7 @@ class OptunaTuner(ABC):
             storage_kwargs: Optional[dict] = None,
             n_trials: int = 100,
             timeout_total: Optional[int] = None,
-            seed: int = None,
+            seed: Optional[int] = None,
     ):
         self.sampler = sampler
         self.sampler_kwargs = sampler_kwargs if sampler_kwargs is not None else {}
@@ -80,13 +81,15 @@ class OptunaTuner(ABC):
     def get_storage(self):
         if self.storage is None:
             storage = InMemoryStorage()
-        elif issubclass(self.storage, BaseStorage):
+        elif isinstance(self.storage, type) and issubclass(self.storage, BaseStorage):
             storage = self.storage(**self.storage_kwargs)
         else:
             raise ValueError(f'Invalid storage type: {type(self.storage)}')
         return storage
     
     def get_trial(self, search_space):
+        if self.study is None:
+            raise RuntimeError("self.study is not initialized. Please create the study before calling get_trial.")
         flatten_search_space = flatten_dict(search_space)
         trial = self.study.ask(flatten_search_space)
         return trial
@@ -157,7 +160,7 @@ class DaskOptunaTuner(OptunaTuner):
             self,
             *args,
             max_concurrent_trials: int = 1,
-            dask_client=None,
+            dask_client: Optional[Client] = None,
             resources_per_task: Optional[dict] = None,
             **kwargs
     ):
@@ -172,18 +175,22 @@ class DaskOptunaTuner(OptunaTuner):
         elif isinstance(self.storage, str):
             if self.storage == 'dask':
                 storage = DaskStorage(client=self.dask_client)
-        elif issubclass(self.storage, BaseStorage):
+            else:
+                raise ValueError(f'Invalid storage string: {self.storage}')
+        elif isinstance(self.storage, type) and issubclass(self.storage, BaseStorage):
             storage = self.storage(**self.storage_kwargs)
         else:
             raise ValueError(f'Invalid storage type: {type(self.storage)}')
         return storage
     
-    def run_trials(self, training_fn, search_space, trial_key_prefix=None, **kwargs):
+    def run_trials(self, training_fn, search_space, trial_key_prefix=None, **kwargs): # type: ignore
         """
         Run trials in parallel using Dask.
         """
         futures = []
         trials_numbers = []
+        if self.dask_client is None:
+            raise RuntimeError("Dask client is not initialized. Please create the Dask client before calling run_trials.")
         for _ in range(self.max_concurrent_trials):
             trial = self.get_trial(search_space=search_space)
             if trial_key_prefix is not None:
@@ -194,11 +201,6 @@ class DaskOptunaTuner(OptunaTuner):
             future = self.dask_client.submit(training_fn, resources=self.resources_per_task, key=trial_key,
                                              pure=False, trial=trial, **kwargs)
             futures.append(future)
-            n_trial += 1
-            if n_trial >= self.n_trials or n_trial == 0:
-                # we have already enqueued all the trials, or it is the first trial,
-                # and we want to run it before the others
-                break
         results = self.dask_client.gather(futures)
         for future in futures:
             future.release()

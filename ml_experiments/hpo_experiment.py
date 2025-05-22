@@ -27,9 +27,13 @@ def discretize_search_space(search_space):
                     dtype = np.int64
                 elif isinstance(optuna_distribution, optuna.distributions.FloatDistribution):
                     dtype = np.float64
+                else:
+                    raise NotImplementedError(f'Distribution {type(optuna_distribution)} not implemented')
                 low = optuna_distribution.low
                 high = optuna_distribution.high
                 step = optuna_distribution.step
+                if step is None:
+                    step = 1
                 log = optuna_distribution.log
                 if not log:
                     n_samples = floor((high - low) / step) + 1
@@ -47,13 +51,23 @@ def discretize_search_space(search_space):
 
 
 class HPOExperiment(BaseExperiment, ABC):
-    def __init__(self, *args,
-                 hpo_framework='optuna',
-                 # general
-                 n_trials=30, timeout_hpo=10 * 60 * 60, timeout_trial=2 * 60 * 60, max_concurrent_trials=1,
-                 # optuna
-                 sampler='tpe', pruner='hyperband', direction='minimize', hpo_metric=None,
-                 **kwargs):
+
+    def __init__(
+        self,
+        *args,
+        hpo_framework: str = "optuna",
+        # general
+        n_trials: int = 30,
+        timeout_hpo: int = 10 * 60 * 60,
+        timeout_trial: int = 2 * 60 * 60,
+        max_concurrent_trials: int = 1,
+        # optuna
+        sampler: str = "tpe",
+        pruner: str = "hyperband",
+        direction: str = "minimize",
+        hpo_metric: str = 'validation_score',
+        **kwargs,
+    ):
         """HPO experiment.
 
         This class allows to perform experiments with HPO for tabular data.It allows to perform experiments with
@@ -168,12 +182,10 @@ class HPOExperiment(BaseExperiment, ABC):
         self.hpo_metric = args.hpo_metric
 
     @abstractmethod
-    def get_hyperband_max_resources(self, combination: dict, unique_params: Optional[dict] = None,
-                                    extra_params: Optional[dict] = None, **kwargs):
+    def get_hyperband_max_resources(self, combination: dict, unique_params: dict, extra_params: dict, **kwargs):
         raise NotImplementedError('This method must be implemented in the subclass')
 
-    def _load_model(self, combination: dict, unique_params: Optional[dict] = None,
-                    extra_params: Optional[dict] = None, **kwargs):
+    def _load_model(self, combination: dict, unique_params: dict, extra_params: dict, **kwargs):
         results = {}
         model_nickname = combination['model_nickname']
         model_cls = self.models_dict[model_nickname][0]
@@ -195,7 +207,7 @@ class HPOExperiment(BaseExperiment, ABC):
 
             # pruner
             if self.pruner == 'hyperband':
-                max_resources = self.hyperband_max_resources
+                max_resources = self.get_hyperband_max_resources(combination, unique_params, extra_params, **kwargs)
                 n_brackets = 5
                 min_resources = 1
                 # the following should give us the desired number of brackets
@@ -226,7 +238,7 @@ class HPOExperiment(BaseExperiment, ABC):
         return results
 
     def _training_fn(self, single_experiment: BaseExperiment, trial_combination: dict, optuna_trial: optuna.Trial,
-                     unique_params: Optional[dict] = None, extra_params: Optional[dict] = None, **kwargs):
+                     unique_params: dict, extra_params: dict, **kwargs):
         combination_values = list(trial_combination.values())
         combination_names = list(trial_combination.keys())
         extra_params = extra_params.copy()
@@ -248,13 +260,14 @@ class HPOExperiment(BaseExperiment, ABC):
                              extra_params=extra_params, return_results=True)
             try:
                 results = func_timeout(timeout_trial, fn, args=combination_values, kwargs=kwargs_fn)
-                if not isinstance(results, dict):
-                    results = {'evaluate_model_return': {}}
-                else:
-                    if 'evaluate_model_return' not in results:
-                        results['evaluate_model_return'] = {}
             except FunctionTimedOut:
                 results = {'evaluate_model_return': {}}
+
+        if not isinstance(results, dict):
+            results = {'evaluate_model_return': {}}
+        else:
+            if 'evaluate_model_return' not in results:
+                results['evaluate_model_return'] = {}
 
         # we do not need to keep all the results (data, model...), only the evaluation results
         keep_results = {'evaluate_model_return': results['evaluate_model_return'],
@@ -289,8 +302,7 @@ class HPOExperiment(BaseExperiment, ABC):
         return trial, trial_combination, trial_key
 
     @abstractmethod
-    def _load_single_experiment(self, combination: dict, unique_params: Optional[dict] = None,
-                                extra_params: Optional[dict] = None, **kwargs):
+    def _load_single_experiment(self, combination: dict, unique_params: dict, extra_params: dict, **kwargs):
         raise NotImplementedError('This method must be implemented in the subclass')
 
     def _get_tell_metric_from_results(self, results):
@@ -305,8 +317,7 @@ class HPOExperiment(BaseExperiment, ABC):
                 return float('inf')
         return evaluate_model_return[self.hpo_metric]
 
-    def _fit_model(self, combination: dict, unique_params: Optional[dict] = None,
-                   extra_params: Optional[dict] = None, **kwargs):
+    def _fit_model(self, combination: dict, unique_params: dict, extra_params: dict, **kwargs):
         model_nickname = combination['model_nickname']
         model_params = combination['model_params']
         fit_params = combination['fit_params']
@@ -339,7 +350,10 @@ class HPOExperiment(BaseExperiment, ABC):
                                   if key.startswith('child_run_id_')]
                 if len(child_runs_ids) < n_trials:  # runs were not created before, so we create them now
                     mlflow_client = mlflow.client.MlflowClient(tracking_uri=self.mlflow_tracking_uri)
-                    experiment_id = mlflow_client.get_experiment_by_name(self.experiment_name).experiment_id
+                    experiment = mlflow_client.get_experiment_by_name(self.experiment_name)
+                    if experiment is None:
+                        raise ValueError(f'Experiment {self.experiment_name} not found in mlflow')
+                    experiment_id = experiment.experiment_id
                     for trial in range(len(child_runs_ids) + 1, n_trials + 1):
                         run = mlflow_client.create_run(experiment_id, tags={MLFLOW_PARENT_RUN_ID: parent_run_id})
                         run_id = run.info.run_id
@@ -362,7 +376,8 @@ class HPOExperiment(BaseExperiment, ABC):
             n_trial = 0
             first_trial = True
             start_time = time.perf_counter()
-            pbar = tqdm(total=n_trials, desc='Trials')
+            n_trials_effective = n_trials
+            pbar = tqdm(total=n_trials, desc='Trials') # type: ignore
             while n_trial < n_trials:
                 if self.dask_cluster_type is not None:
                     with worker_client() as client:
@@ -394,7 +409,7 @@ class HPOExperiment(BaseExperiment, ABC):
                         for future in futures:
                             future.release()
 
-                    for trial_number, result in zip(trial_numbers, results):
+                    for trial_number, result in zip(trial_numbers, results): # type: ignore
                         study_id = storage.get_study_id_from_name(study.study_name)
                         trial_id = storage.get_trial_id_from_study_id_trial_number(study_id, trial_number)
                         storage.set_trial_user_attr(trial_id, 'result', result)
@@ -451,34 +466,34 @@ class HPOExperiment(BaseExperiment, ABC):
                     mlflow_client.set_tag(parent_run_id, 'grid_search_stopped', 'True')
                     mlflow_client.set_tag(parent_run_id, 'n_trials_effective', n_trials_effective)
                     for child_run_id in child_runs_ids:
-                        run_status = mlflow_client.get_run(child_run_id).info.status
-                        if run_status == 'SCHEDULED':
-                            mlflow_client.set_tag(child_run_id, 'raised_exception', True)
-                            mlflow_client.set_tag(child_run_id, 'EXCEPTION', 'Grid search stopped.')
-                            mlflow_client.set_terminated(child_run_id, status='FAILED')
+                        if child_run_id is not None:  # this should always happen if we have a parent_run_id
+                            run_status = mlflow_client.get_run(child_run_id).info.status
+                            if run_status == 'SCHEDULED':
+                                mlflow_client.set_tag(child_run_id, 'raised_exception', True)
+                                mlflow_client.set_tag(child_run_id, 'EXCEPTION', 'Grid search stopped.')
+                                mlflow_client.set_terminated(child_run_id, status='FAILED')
             elif elapsed_time_timed_out:
                 if parent_run_id:
                     mlflow_client = mlflow.client.MlflowClient(tracking_uri=self.mlflow_tracking_uri)
                     mlflow_client.set_tag(parent_run_id, 'elapsed_time_timed_out', 'True')
                     mlflow_client.set_tag(parent_run_id, 'n_trials_effective', n_trials_effective)
                     for child_run_id in child_runs_ids:
-                        run_status = mlflow_client.get_run(child_run_id).info.status
-                        if run_status == 'SCHEDULED':
-                            mlflow_client.set_tag(child_run_id, 'raised_exception', True)
-                            mlflow_client.set_tag(child_run_id, 'EXCEPTION', 'Elapsed time timed out.')
-                            mlflow_client.set_terminated(child_run_id, status='FAILED')
+                        if child_run_id is not None: # this should always happen if we have a parent_run_id
+                            run_status = mlflow_client.get_run(child_run_id).info.status
+                            if run_status == 'SCHEDULED':
+                                mlflow_client.set_tag(child_run_id, 'raised_exception', True)
+                                mlflow_client.set_tag(child_run_id, 'EXCEPTION', 'Elapsed time timed out.')
+                                mlflow_client.set_terminated(child_run_id, status='FAILED')
 
             return {}
 
         else:
             raise NotImplementedError(f'HPO framework {self.hpo_framework} not implemented')
 
-    def _get_metrics(self, combination: dict, unique_params: Optional[dict] = None,
-                     extra_params: Optional[dict] = None, **kwargs):
+    def _get_metrics(self, combination: dict, unique_params: dict, extra_params: dict, **kwargs):
         return {}
 
-    def _evaluate_model(self, combination: dict, unique_params: Optional[dict] = None,
-                        extra_params: Optional[dict] = None, **kwargs):
+    def _evaluate_model(self, combination: dict, unique_params: dict, extra_params: dict, **kwargs):
         study = kwargs['load_model_return']['study']
 
         best_trial = study.best_trial
@@ -514,8 +529,8 @@ class HPOExperiment(BaseExperiment, ABC):
                  ' create_validation_set=True or pass --create_validation_set')
         return combinations, combination_names, unique_params, extra_params
 
-    def _create_mlflow_run(self, *combination, combination_names: Optional[list[str]] = None,
-                           unique_params: Optional[dict] = None, extra_params: Optional[dict] = None):
+    def _create_mlflow_run(self, *combination, combination_names: list[str],
+                           unique_params: dict, extra_params: dict):
         parent_run_id = super()._create_mlflow_run(*combination, combination_names=combination_names,
                                                    unique_params=unique_params, extra_params=extra_params)
         mlflow_client = mlflow.client.MlflowClient(tracking_uri=self.mlflow_tracking_uri)
@@ -528,9 +543,3 @@ class HPOExperiment(BaseExperiment, ABC):
             mlflow_client.set_tag(run_id, 'parent_run_id', parent_run_id)
             mlflow_client.update_run(run_id, status='SCHEDULED')
         return parent_run_id
-
-
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser()
-    experiment = HPOExperiment(parser=parser)
-    experiment.run()

@@ -72,7 +72,7 @@ def get_df_runs_from_mlflow_sql(engine, runs_columns, experiments_columns=None, 
 def get_missing_entries(df, columns_names, should_contain_values):
     df = df.copy()
     indexes = product(*should_contain_values)
-    df_should_contain = pd.DataFrame(index=indexes)
+    df_should_contain = pd.DataFrame(index=indexes) # type: ignore
     contain = [df[column_name] for column_name in columns_names]
     df['indexes'] = list(zip(*contain))
     df_missing = df.join(df_should_contain, 'indexes', how='right')
@@ -122,7 +122,7 @@ def get_dfs_means_stds_both(df, column_model_name, column_task_id, column_datase
     )
     dfs = [means, stds]
     both = pd.concat([dfs[0], dfs[1]], keys=['mean', 'std'], axis=1)
-    both.columns = both.columns.swaplevel(0, 1)
+    both.columns = both.columns.swaplevel(0, 1) # type: ignore
     both = both.sort_index(axis=1)
     return dfs[0], dfs[1], both
 
