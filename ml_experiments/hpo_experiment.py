@@ -10,10 +10,13 @@ import mlflow
 from warnings import warn
 from mlflow.utils.mlflow_tags import MLFLOW_PARENT_RUN_ID
 from ml_experiments.base_experiment import BaseExperiment
+from ml_experiments.tuners import OptunaTuner, DaskOptunaTuner
 from sklearn.utils import check_random_state
 from tqdm.auto import tqdm
 import numpy as np
 from func_timeout import func_timeout, FunctionTimedOut
+from ml_experiments.utils import flatten_dict
+from functools import partial
 
 
 def discretize_search_space(search_space):
@@ -190,55 +193,59 @@ class HPOExperiment(BaseExperiment, ABC):
         model_nickname = combination['model_nickname']
         model_cls = self.models_dict[model_nickname][0]
         seed_model = combination['seed_model']
+        timeout_hpo = unique_params.get("timeout_hpo", self.timeout_hpo)
 
         if self.hpo_framework == 'optuna':
-            # sampler
-            if self.sampler == 'tpe':
-                sampler = optuna.samplers.TPESampler(multivariate=True, constant_liar=True, seed=seed_model)
-            elif self.sampler == 'random':
-                sampler = optuna.samplers.RandomSampler(seed=seed_model)
-            elif self.sampler == 'grid':
+            if self.sampler == 'grid':
                 search_space, default_values = model_cls.create_search_space()
                 search_space = discretize_search_space(search_space)
                 sampler = optuna.samplers.GridSampler(search_space=search_space, seed=seed_model)
             else:
-                raise NotImplementedError(f'Sampler {self.sampler} not implemented for optuna')
-            results['sampler'] = sampler
+                sampler = self.sampler
 
-            # pruner
-            if self.pruner == 'hyperband':
+            if self.pruner == "hyperband":
                 max_resources = self.get_hyperband_max_resources(combination, unique_params, extra_params, **kwargs)
                 n_brackets = 5
                 min_resources = 1
                 # the following should give us the desired number of brackets
                 reduction_factor = floor((max_resources / min_resources) ** (1 / (n_brackets - 1)))
-                pruner = optuna.pruners.HyperbandPruner(min_resource=min_resources, max_resource=max_resources,
-                                                        reduction_factor=reduction_factor)
-            elif self.pruner == 'sha':
-                pruner = optuna.pruners.SuccessiveHalvingPruner(min_resource=10)
-            elif self.pruner is None or (self.pruner).lower() == 'none':
-                pruner = None
+                pruner = optuna.pruners.HyperbandPruner(
+                    min_resource=min_resources, max_resource=max_resources, reduction_factor=reduction_factor
+                )
             else:
-                raise NotImplementedError(f'Pruner {self.pruner} not implemented for optuna')
-            results['pruner'] = pruner
+                pruner = self.pruner
 
-            # storage
+            tuner_kwargs = dict(
+                sampler=sampler,
+                pruner=pruner,
+                n_trials=self.n_trials,
+                timeout_total=timeout_hpo,
+                seed=seed_model,
+            )
+
             if self.dask_cluster_type is not None:
-                client = get_client()
-                storage = DaskStorage(client=client)
+                storage = DaskStorage(client=get_client())
+                tuner_kwargs["client"] = "worker_client"
+                tuner_kwargs["storage"] = storage
+                tuner_kwargs["max_concurrent_trials"] = self.max_concurrent_trials
+                tuner_kwargs["resources_per_task"] = {
+                    "threads": self.n_threads_per_task,
+                    "cores": self.n_cores_per_task,
+                    "gpus": self.n_gpus_per_worker,
+                    "processes": self.n_processes_per_task,
+                }
+                tuner_cls = DaskOptunaTuner
             else:
-                storage = None
-            results['storage'] = storage
+                tuner_cls = OptunaTuner
 
-            study = optuna.create_study(storage=storage, sampler=sampler, pruner=pruner, direction=self.direction)
-            results['study'] = study
-        else:
-            raise NotImplementedError(f'HPO framework {self.hpo_framework} not implemented')
+            tuner = tuner_cls(**tuner_kwargs)  # type: ignore
+            results['tuner'] = tuner
 
         return results
 
-    def _training_fn(self, single_experiment: BaseExperiment, trial_combination: dict, optuna_trial: optuna.Trial,
-                     unique_params: dict, extra_params: dict, **kwargs):
+    def _training_fn(self, trial_dict:dict, single_experiment: BaseExperiment, unique_params: dict, 
+                     extra_params: dict, **kwargs):
+        trial_combination = trial_dict["trial_combination"]
         combination_values = list(trial_combination.values())
         combination_names = list(trial_combination.keys())
         extra_params = extra_params.copy()
@@ -272,18 +279,26 @@ class HPOExperiment(BaseExperiment, ABC):
         # we do not need to keep all the results (data, model...), only the evaluation results
         keep_results = {'evaluate_model_return': results['evaluate_model_return'],
                         'trial_combination': trial_combination, 'work_dir': work_dir}
+
+        if parent_run_id is not None:
+            eval_result = results["evaluate_model_return"].copy()
+            eval_result.pop('elapsed_time', None)
+            mlflow.log_metrics(eval_result, run_id=parent_run_id, step=trial_dict["trial"].number)
         return keep_results
 
-    def _get_optuna_params(self, search_space, study, model_params, fit_params, combination, child_run_id,
-                           random_state):
+    def _get_optuna_params(
+        self, search_space, study, model_params, fit_params, combination, child_runs_ids, random_state
+    ):
         optuna_distributions_search_space = {}
         conditional_distributions_search_space = {}
-        for name, value in search_space.items():
+        flatten_search_space = flatten_dict(search_space)
+        for name, value in flatten_search_space.items():
             if isinstance(value, optuna.distributions.BaseDistribution):
                 optuna_distributions_search_space[name] = value
             else:
                 conditional_distributions_search_space[name] = value
         trial = study.ask(optuna_distributions_search_space)
+        child_run_id = child_runs_ids[trial.number] 
         conditional_params = {name: fn(trial) for name, fn
                               in conditional_distributions_search_space.items()}
         trial_model_params = trial.params
@@ -299,7 +314,7 @@ class HPOExperiment(BaseExperiment, ABC):
         trial_combination['seed_model'] = trial_seed_model
         trial_combination['fit_params'] = fit_params.copy()
         trial_combination['mlflow_run_id'] = child_run_id
-        return trial, trial_combination, trial_key
+        return dict(trial=trial, trial_combination=trial_combination, trial_key=trial_key)
 
     @abstractmethod
     def _load_single_experiment(self, combination: dict, unique_params: dict, extra_params: dict, **kwargs):
@@ -324,177 +339,97 @@ class HPOExperiment(BaseExperiment, ABC):
         seed_model = combination['seed_model']
         mlflow_run_id = extra_params.get('mlflow_run_id', None)
         model_cls = self.models_dict[model_nickname][0]
-        timeout_hpo = unique_params.get('timeout_hpo', self.timeout_hpo)
+        tuner: OptunaTuner = kwargs.get('load_model_return', {}).get('tuner', None)
 
-        if self.hpo_framework == 'optuna':
-            study = kwargs['load_model_return']['study']
-            storage = kwargs['load_model_return']['storage']
-            sampler = kwargs['load_model_return']['sampler']
-
-            if isinstance(sampler, optuna.samplers.GridSampler):
-                # we will ignore n_trials and run every trial defined in the search_space
-                search_space = sampler._search_space
-                n_samples_params = [len(value) for value in search_space.values()]
-                n_trials = np.prod(n_samples_params)
-            else:
-                n_trials = self.n_trials
-
-            # objective and search space (distribution)
-            search_space, default_values = model_cls.create_search_space()
-            random_state = check_random_state(seed_model)
-            if mlflow_run_id is not None:
-                parent_run_id = mlflow_run_id
-                parent_run = mlflow.get_run(parent_run_id)
-                child_runs = parent_run.data.tags
-                child_runs_ids = [child_run_id for key, child_run_id in child_runs.items()
-                                  if key.startswith('child_run_id_')]
-                if len(child_runs_ids) < n_trials:  # runs were not created before, so we create them now
-                    mlflow_client = mlflow.client.MlflowClient(tracking_uri=self.mlflow_tracking_uri)
-                    experiment = mlflow_client.get_experiment_by_name(self.experiment_name)
-                    if experiment is None:
-                        raise ValueError(f'Experiment {self.experiment_name} not found in mlflow')
-                    experiment_id = experiment.experiment_id
-                    for trial in range(len(child_runs_ids) + 1, n_trials + 1):
-                        run = mlflow_client.create_run(experiment_id, tags={MLFLOW_PARENT_RUN_ID: parent_run_id})
-                        run_id = run.info.run_id
-                        mlflow_client.set_tag(parent_run_id, f'child_run_id_{trial}', run_id)
-                        mlflow_client.set_tag(run_id, 'parent_run_id', parent_run_id)
-                        mlflow_client.update_run(run_id, status='SCHEDULED')
-                        child_runs_ids.append(run_id)
-            else:
-                parent_run_id = None
-                child_runs_ids = [None for _ in range(self.n_trials)]
-
-            if not isinstance(sampler, optuna.samplers.GridSampler):
-                study.enqueue_trial(default_values)
-
-            # we will run several experiments
-            single_experiment = self._load_single_experiment(combination, unique_params=unique_params,
-                                                             extra_params=extra_params, **kwargs)
-            grid_search_stopped = False
-            elapsed_time_timed_out = False
-            n_trial = 0
-            first_trial = True
-            start_time = time.perf_counter()
-            n_trials_effective = n_trials
-            pbar = tqdm(total=n_trials, desc='Trials') # type: ignore
-            while n_trial < n_trials:
-                if self.dask_cluster_type is not None:
-                    with worker_client() as client:
-                        futures = []
-                        trial_numbers = []
-                        for _ in range(self.max_concurrent_trials):
-                            child_run_id = child_runs_ids[n_trial]
-                            trial, trial_combination, trial_key = self._get_optuna_params(
-                                search_space, study, model_params, fit_params, combination, child_run_id, random_state
-                            )
-                            trial_numbers.append(trial.number)
-                            resources_per_task = {'threads': self.n_threads_per_task, 'cores': self.n_cores_per_task,
-                                                  'gpus': self.n_gpus_per_worker,
-                                                  'processes': self.n_processes_per_task}
-                            futures.append(
-                                client.submit(self._training_fn, resources=resources_per_task, key=trial_key, pure=False,
-                                              single_experiment=single_experiment, trial_combination=trial_combination,
-                                              optuna_trial=trial, unique_params=unique_params,
-                                              extra_params=extra_params, **kwargs)
-                            )
-                            n_trial += 1
-                            if n_trial >= self.n_trials or first_trial:
-                                # we have already enqueued all the trials, or it is the first trial,
-                                # and we want to run it before the others
-                                first_trial = False
-                                break
-
-                        results = client.gather(futures)
-                        for future in futures:
-                            future.release()
-
-                    for trial_number, result in zip(trial_numbers, results): # type: ignore
-                        study_id = storage.get_study_id_from_name(study.study_name)
-                        trial_id = storage.get_trial_id_from_study_id_trial_number(study_id, trial_number)
-                        storage.set_trial_user_attr(trial_id, 'result', result)
-                        try:
-                            study.tell(trial_number, self._get_tell_metric_from_results(result))
-                        except RuntimeError:  # handle stop of grid search
-                            if not grid_search_stopped:  # we save the n_trial when the grid search stopped
-                                n_trials_effective = n_trial
-                            grid_search_stopped = True
-                            pass
-                        pbar.update(1)
-                        if parent_run_id:
-                            eval_result = result['evaluate_model_return'].copy()
-                            eval_result.pop('elapsed_time', None)
-                            mlflow.log_metrics(eval_result, run_id=parent_run_id, step=trial_number)
-                    elapsed_time = time.perf_counter() - start_time
-                    if elapsed_time > timeout_hpo:
-                        elapsed_time_timed_out = True
-                        n_trials_effective = n_trial
-                        break
-                else:
-                    child_run_id = child_runs_ids[n_trial]
-                    trial, trial_combination, _ = self._get_optuna_params(
-                        search_space, study, model_params, fit_params, combination, child_run_id, random_state
-                    )
-                    result = self._training_fn(single_experiment=single_experiment, trial_combination=trial_combination,
-                                               optuna_trial=trial, unique_params=unique_params,
-                                               extra_params=extra_params, **kwargs)
-                    trial.set_user_attr('result', result)
-                    try:
-                        study.tell(trial, self._get_tell_metric_from_results(result))
-                    except RuntimeError:  # handle stop of grid search
-                        if not grid_search_stopped:  # we save the n_trial when the grid search stopped
-                            n_trials_effective = n_trial
-                        grid_search_stopped = True
-                        pass
-                    pbar.update(1)
-                    if parent_run_id:
-                        eval_result = result['evaluate_model_return'].copy()
-                        eval_result.pop('elapsed_time', None)
-                        mlflow.log_metrics(eval_result, run_id=parent_run_id, step=trial.number)
-                    n_trial += 1
-                    elapsed_time = time.perf_counter() - start_time
-                    if elapsed_time > timeout_hpo:
-                        elapsed_time_timed_out = True
-                        n_trials_effective = n_trial
-                        break
-
-            pbar.close()
-
-            if grid_search_stopped:
-                if parent_run_id:
-                    mlflow_client = mlflow.client.MlflowClient(tracking_uri=self.mlflow_tracking_uri)
-                    mlflow_client.set_tag(parent_run_id, 'grid_search_stopped', 'True')
-                    mlflow_client.set_tag(parent_run_id, 'n_trials_effective', n_trials_effective)
-                    for child_run_id in child_runs_ids:
-                        if child_run_id is not None:  # this should always happen if we have a parent_run_id
-                            run_status = mlflow_client.get_run(child_run_id).info.status
-                            if run_status == 'SCHEDULED':
-                                mlflow_client.set_tag(child_run_id, 'raised_exception', True)
-                                mlflow_client.set_tag(child_run_id, 'EXCEPTION', 'Grid search stopped.')
-                                mlflow_client.set_terminated(child_run_id, status='FAILED')
-            elif elapsed_time_timed_out:
-                if parent_run_id:
-                    mlflow_client = mlflow.client.MlflowClient(tracking_uri=self.mlflow_tracking_uri)
-                    mlflow_client.set_tag(parent_run_id, 'elapsed_time_timed_out', 'True')
-                    mlflow_client.set_tag(parent_run_id, 'n_trials_effective', n_trials_effective)
-                    for child_run_id in child_runs_ids:
-                        if child_run_id is not None: # this should always happen if we have a parent_run_id
-                            run_status = mlflow_client.get_run(child_run_id).info.status
-                            if run_status == 'SCHEDULED':
-                                mlflow_client.set_tag(child_run_id, 'raised_exception', True)
-                                mlflow_client.set_tag(child_run_id, 'EXCEPTION', 'Elapsed time timed out.')
-                                mlflow_client.set_terminated(child_run_id, status='FAILED')
-
-            return {}
-
+        if isinstance(tuner.sampler, optuna.samplers.GridSampler):
+            # we will ignore n_trials and run every trial defined in the search_space
+            search_space = tuner.sampler._search_space
+            n_samples_params = [len(value) for value in search_space.values()]
+            n_trials = np.prod(n_samples_params)
         else:
-            raise NotImplementedError(f'HPO framework {self.hpo_framework} not implemented')
+            n_trials = self.n_trials
+
+        # objective and search space (distribution)
+        search_space, default_values = model_cls.create_search_space()
+        random_state = check_random_state(seed_model)
+        if mlflow_run_id is not None:
+            parent_run_id = mlflow_run_id
+            parent_run = mlflow.get_run(parent_run_id)
+            child_runs = parent_run.data.tags
+            child_runs_ids = [child_run_id for key, child_run_id in child_runs.items()
+                                if key.startswith('child_run_id_')]
+            if len(child_runs_ids) < n_trials:  # runs were not created before, so we create them now
+                mlflow_client = mlflow.client.MlflowClient(tracking_uri=self.mlflow_tracking_uri)
+                experiment = mlflow_client.get_experiment_by_name(self.experiment_name)
+                if experiment is None:
+                    raise ValueError(f'Experiment {self.experiment_name} not found in mlflow')
+                experiment_id = experiment.experiment_id
+                for trial in range(len(child_runs_ids) + 1, n_trials + 1):
+                    run = mlflow_client.create_run(experiment_id, tags={MLFLOW_PARENT_RUN_ID: parent_run_id})
+                    run_id = run.info.run_id
+                    mlflow_client.set_tag(parent_run_id, f'child_run_id_{trial}', run_id)
+                    mlflow_client.set_tag(run_id, 'parent_run_id', parent_run_id)
+                    mlflow_client.update_run(run_id, status='SCHEDULED')
+                    child_runs_ids.append(run_id)
+        else:
+            parent_run_id = None
+            child_runs_ids = [None for _ in range(self.n_trials)]
+
+        # we will run several experiments
+        single_experiment = self._load_single_experiment(
+            combination, unique_params=unique_params, extra_params=extra_params, **kwargs
+        )
+
+        get_trial_fn = partial(self._get_optuna_params, model_params=model_params, fit_params=fit_params,
+                               combination=combination, child_runs_ids=child_runs_ids, random_state=random_state)
+        training_fn = partial(self._training_fn, single_experiment=single_experiment, unique_params=unique_params,
+                              extra_params=extra_params, **kwargs)
+
+        study = tuner.tune(
+            training_fn=training_fn,
+            search_space=search_space,
+            direction=self.direction,
+            metric=self.hpo_metric,
+            enqueue_configurations=default_values,
+            get_trial_fn=get_trial_fn,
+        )
+
+        grid_search_stopped = tuner.grid_search_stopped
+        elapsed_time_timed_out = tuner.timed_out
+        n_trials_effective = tuner.n_trials_effective
+
+        if grid_search_stopped:
+            if parent_run_id:
+                mlflow_client = mlflow.client.MlflowClient(tracking_uri=self.mlflow_tracking_uri)
+                mlflow_client.set_tag(parent_run_id, 'grid_search_stopped', 'True')
+                mlflow_client.set_tag(parent_run_id, 'n_trials_effective', n_trials_effective)
+                for child_run_id in child_runs_ids:
+                    if child_run_id is not None:  # this should always happen if we have a parent_run_id
+                        run_status = mlflow_client.get_run(child_run_id).info.status
+                        if run_status == 'SCHEDULED':
+                            mlflow_client.set_tag(child_run_id, 'raised_exception', True)
+                            mlflow_client.set_tag(child_run_id, 'EXCEPTION', 'Grid search stopped.')
+                            mlflow_client.set_terminated(child_run_id, status='FAILED')
+        elif elapsed_time_timed_out:
+            if parent_run_id:
+                mlflow_client = mlflow.client.MlflowClient(tracking_uri=self.mlflow_tracking_uri)
+                mlflow_client.set_tag(parent_run_id, 'elapsed_time_timed_out', 'True')
+                mlflow_client.set_tag(parent_run_id, 'n_trials_effective', n_trials_effective)
+                for child_run_id in child_runs_ids:
+                    if child_run_id is not None: # this should always happen if we have a parent_run_id
+                        run_status = mlflow_client.get_run(child_run_id).info.status
+                        if run_status == 'SCHEDULED':
+                            mlflow_client.set_tag(child_run_id, 'raised_exception', True)
+                            mlflow_client.set_tag(child_run_id, 'EXCEPTION', 'Elapsed time timed out.')
+                            mlflow_client.set_terminated(child_run_id, status='FAILED')
+        
+        return dict(study=study)
 
     def _get_metrics(self, combination: dict, unique_params: dict, extra_params: dict, **kwargs):
         return {}
 
     def _evaluate_model(self, combination: dict, unique_params: dict, extra_params: dict, **kwargs):
-        study = kwargs['load_model_return']['study']
+        study = kwargs['fit_model_return']['study']
 
         best_trial = study.best_trial
         best_trial_result = best_trial.user_attrs.get('result', dict())
