@@ -230,7 +230,6 @@ class BaseExperiment(ABC):
         self.parser.add_argument("--mlflow_tracking_uri", type=str, default=self.mlflow_tracking_uri)
         self.parser.add_argument("--do_not_check_if_exists", action="store_true")
         self.parser.add_argument("--raise_on_fit_error", action="store_true")
-        self.parser.add_argument("--mlflow_run_id", type=str, default=self.mlflow_run_id)
 
         self.parser.add_argument("--dask_cluster_type", type=str, default=self.dask_cluster_type)
         self.parser.add_argument(
@@ -270,7 +269,6 @@ class BaseExperiment(ABC):
         self.mlflow_tracking_uri = args.mlflow_tracking_uri
         self.check_if_exists = not args.do_not_check_if_exists
         self.raise_on_error = args.raise_on_fit_error
-        self.mlflow_run_id = args.mlflow_run_id
 
         self.dask_cluster_type = args.dask_cluster_type
         self.n_workers = args.n_workers
@@ -444,7 +442,9 @@ class BaseExperiment(ABC):
         client.forward_logging()
         return client
 
-    def _on_train_start(self, combination: dict, unique_params: dict, extra_params: dict, **kwargs):
+    def _on_train_start(
+        self, combination: dict, unique_params: dict, extra_params: dict, mlflow_run_id: Optional[str] = None, **kwargs
+    ):
         if self.n_gpus_per_task > 0:
             if torch_available:
                 if torch.cuda.is_available():
@@ -455,64 +455,99 @@ class BaseExperiment(ABC):
                     torch.cuda.set_per_process_memory_fraction(self.n_gpus_per_task)
         return {}
 
-    def _before_load_data(self, combination: dict, unique_params: dict, extra_params: dict, **kwargs):
+    def _before_load_data(
+        self, combination: dict, unique_params: dict, extra_params: dict, mlflow_run_id: Optional[str] = None, **kwargs
+    ):
         return {}
 
     @abstractmethod
-    def _load_data(self, combination: dict, unique_params: dict, extra_params: dict, **kwargs):
+    def _load_data(
+        self, combination: dict, unique_params: dict, extra_params: dict, mlflow_run_id: Optional[str] = None, **kwargs
+    ):
         return {}
 
-    def _after_load_data(self, combination: dict, unique_params: dict, extra_params: dict, **kwargs):
+    def _after_load_data(
+        self, combination: dict, unique_params: dict, extra_params: dict, mlflow_run_id: Optional[str] = None, **kwargs
+    ):
         return {}
 
-    def _before_load_model(self, combination: dict, unique_params: dict, extra_params: dict, **kwargs):
-        return {}
-
-    @abstractmethod
-    def _load_model(self, combination: dict, unique_params: dict, extra_params: dict, **kwargs):
-        return {}
-
-    def _after_load_model(self, combination: dict, unique_params: dict, extra_params: dict, **kwargs):
-        return {}
-
-    def _before_get_metrics(self, combination: dict, unique_params: dict, extra_params: dict, **kwargs):
+    def _before_load_model(
+        self, combination: dict, unique_params: dict, extra_params: dict, mlflow_run_id: Optional[str] = None, **kwargs
+    ):
         return {}
 
     @abstractmethod
-    def _get_metrics(self, combination: dict, unique_params: dict, extra_params: dict, **kwargs):
+    def _load_model(
+        self, combination: dict, unique_params: dict, extra_params: dict, mlflow_run_id: Optional[str] = None, **kwargs
+    ):
         return {}
 
-    def _after_get_metrics(self, combination: dict, unique_params: dict, extra_params: dict, **kwargs):
+    def _after_load_model(
+        self, combination: dict, unique_params: dict, extra_params: dict, mlflow_run_id: Optional[str] = None, **kwargs
+    ):
         return {}
 
-    def _before_fit_model(self, combination: dict, unique_params: dict, extra_params: dict, **kwargs):
-        return {}
-
-    @abstractmethod
-    def _fit_model(self, combination: dict, unique_params: dict, extra_params: dict, **kwargs):
-        return {}
-
-    def _after_fit_model(self, combination: dict, unique_params: dict, extra_params: dict, **kwargs):
-        return {}
-
-    def _before_evaluate_model(self, combination: dict, unique_params: dict, extra_params: dict, **kwargs):
+    def _before_get_metrics(
+        self, combination: dict, unique_params: dict, extra_params: dict, mlflow_run_id: Optional[str] = None, **kwargs
+    ):
         return {}
 
     @abstractmethod
-    def _evaluate_model(self, combination: dict, unique_params: dict, extra_params: dict, **kwargs):
+    def _get_metrics(
+        self, combination: dict, unique_params: dict, extra_params: dict, mlflow_run_id: Optional[str] = None, **kwargs
+    ):
         return {}
 
-    def _after_evaluate_model(self, combination: dict, unique_params: dict, extra_params: dict, **kwargs):
+    def _after_get_metrics(
+        self, combination: dict, unique_params: dict, extra_params: dict, mlflow_run_id: Optional[str] = None, **kwargs
+    ):
         return {}
 
-    def _on_exception(self, combination: dict, unique_params: dict, extra_params: dict, **kwargs):
+    def _before_fit_model(
+        self, combination: dict, unique_params: dict, extra_params: dict, mlflow_run_id: Optional[str] = None, **kwargs
+    ):
+        return {}
+
+    @abstractmethod
+    def _fit_model(
+        self, combination: dict, unique_params: dict, extra_params: dict, mlflow_run_id: Optional[str] = None, **kwargs
+    ):
+        return {}
+
+    def _after_fit_model(
+        self, combination: dict, unique_params: dict, extra_params: dict, mlflow_run_id: Optional[str] = None, **kwargs
+    ):
+        return {}
+
+    def _before_evaluate_model(
+        self, combination: dict, unique_params: dict, extra_params: dict, mlflow_run_id: Optional[str] = None, **kwargs
+    ):
+        return {}
+
+    @abstractmethod
+    def _evaluate_model(
+        self, combination: dict, unique_params: dict, extra_params: dict, mlflow_run_id: Optional[str] = None, **kwargs
+    ):
+        return {}
+
+    def _after_evaluate_model(
+        self, combination: dict, unique_params: dict, extra_params: dict, mlflow_run_id: Optional[str] = None, **kwargs
+    ):
+        return {}
+
+    def _on_exception(
+        self, combination: dict, unique_params: dict, extra_params: dict, mlflow_run_id: Optional[str] = None, **kwargs
+    ):
         return self._on_exception_or_train_end(combination, unique_params, extra_params=extra_params, **kwargs)
 
-    def _on_train_end(self, combination: dict, unique_params: dict, extra_params: dict, **kwargs):
+    def _on_train_end(
+        self, combination: dict, unique_params: dict, extra_params: dict, mlflow_run_id: Optional[str] = None, **kwargs
+    ):
         return self._on_exception_or_train_end(combination, unique_params, extra_params=extra_params, **kwargs)
 
-    def _on_exception_or_train_end(self, combination: dict, unique_params: dict, extra_params: dict, **kwargs):
-        mlflow_run_id = extra_params.get("mlflow_run_id", None)
+    def _on_exception_or_train_end(
+        self, combination: dict, unique_params: dict, extra_params: dict, mlflow_run_id=None, **kwargs
+    ):
         self._log_run_results(
             combination=combination,
             unique_params=unique_params,
@@ -686,13 +721,19 @@ class BaseExperiment(ABC):
             return False
 
     def _train_model(
-        self, combination: dict, unique_params: dict, extra_params: dict, return_results: bool = False, **kwargs
+        self,
+        combination: dict,
+        unique_params: dict,
+        extra_params: dict,
+        return_results: bool = False,
+        mlflow_run_id: Optional[str] = None,
+        **kwargs,
     ):
         results = {}
         start_time = time.perf_counter()
         try:
 
-            timeout_fit = extra_params.get("timeout_fit", None)
+            timeout_fit = self.timeout_fit
             log_and_print_msg("Running...", verbose=self.verbose, verbose_level=1, **combination, **unique_params)
 
             results["on_train_start_return"] = self._add_elapsed_time(
@@ -700,6 +741,7 @@ class BaseExperiment(ABC):
                 combination=combination,
                 unique_params=unique_params,
                 extra_params=extra_params,
+                mlflow_run_id=mlflow_run_id,
                 **kwargs,
                 **results,
             )
@@ -710,6 +752,7 @@ class BaseExperiment(ABC):
                 combination=combination,
                 unique_params=unique_params,
                 extra_params=extra_params,
+                mlflow_run_id=mlflow_run_id,
                 **kwargs,
                 **results,
             )
@@ -719,6 +762,7 @@ class BaseExperiment(ABC):
                 combination=combination,
                 unique_params=unique_params,
                 extra_params=extra_params,
+                mlflow_run_id=mlflow_run_id,
                 **kwargs,
                 **results,
             )
@@ -727,6 +771,7 @@ class BaseExperiment(ABC):
                 combination=combination,
                 unique_params=unique_params,
                 extra_params=extra_params,
+                mlflow_run_id=mlflow_run_id,
                 **kwargs,
                 **results,
             )
@@ -737,6 +782,7 @@ class BaseExperiment(ABC):
                 combination=combination,
                 unique_params=unique_params,
                 extra_params=extra_params,
+                mlflow_run_id=mlflow_run_id,
                 **kwargs,
                 **results,
             )
@@ -745,6 +791,7 @@ class BaseExperiment(ABC):
                 combination=combination,
                 unique_params=unique_params,
                 extra_params=extra_params,
+                mlflow_run_id=mlflow_run_id,
                 **kwargs,
                 **results,
             )
@@ -753,6 +800,7 @@ class BaseExperiment(ABC):
                 combination=combination,
                 unique_params=unique_params,
                 extra_params=extra_params,
+                mlflow_run_id=mlflow_run_id,
                 **kwargs,
                 **results,
             )
@@ -763,6 +811,7 @@ class BaseExperiment(ABC):
                 combination=combination,
                 unique_params=unique_params,
                 extra_params=extra_params,
+                mlflow_run_id=mlflow_run_id,
                 **kwargs,
                 **results,
             )
@@ -771,6 +820,7 @@ class BaseExperiment(ABC):
                 combination=combination,
                 unique_params=unique_params,
                 extra_params=extra_params,
+                mlflow_run_id=mlflow_run_id,
                 **kwargs,
                 **results,
             )
@@ -779,6 +829,7 @@ class BaseExperiment(ABC):
                 combination=combination,
                 unique_params=unique_params,
                 extra_params=extra_params,
+                mlflow_run_id=mlflow_run_id,
                 **kwargs,
                 **results,
             )
@@ -789,13 +840,18 @@ class BaseExperiment(ABC):
                 combination=combination,
                 unique_params=unique_params,
                 extra_params=extra_params,
+                mlflow_run_id=mlflow_run_id,
                 **kwargs,
                 **results,
             )
 
             if timeout_fit is not None:
                 kwargs_fit_model = dict(
-                    fn=self._fit_model, combination=combination, unique_params=unique_params, extra_params=extra_params
+                    fn=self._fit_model,
+                    combination=combination,
+                    unique_params=unique_params,
+                    extra_params=extra_params,
+                    mlflow_run_id=mlflow_run_id,
                 )
                 kwargs_fit_model.update(kwargs)
                 kwargs_fit_model.update(results)
@@ -806,6 +862,7 @@ class BaseExperiment(ABC):
                     combination=combination,
                     unique_params=unique_params,
                     extra_params=extra_params,
+                    mlflow_run_id=mlflow_run_id,
                     **kwargs,
                     **results,
                 )
@@ -814,6 +871,7 @@ class BaseExperiment(ABC):
                 combination=combination,
                 unique_params=unique_params,
                 extra_params=extra_params,
+                mlflow_run_id=mlflow_run_id,
                 **kwargs,
                 **results,
             )
@@ -824,6 +882,7 @@ class BaseExperiment(ABC):
                 combination=combination,
                 unique_params=unique_params,
                 extra_params=extra_params,
+                mlflow_run_id=mlflow_run_id,
                 **kwargs,
                 **results,
             )
@@ -832,6 +891,7 @@ class BaseExperiment(ABC):
                 combination=combination,
                 unique_params=unique_params,
                 extra_params=extra_params,
+                mlflow_run_id=mlflow_run_id,
                 **kwargs,
                 **results,
             )
@@ -840,6 +900,7 @@ class BaseExperiment(ABC):
                 combination=combination,
                 unique_params=unique_params,
                 extra_params=extra_params,
+                mlflow_run_id=mlflow_run_id,
                 **kwargs,
                 **results,
             )
@@ -850,6 +911,7 @@ class BaseExperiment(ABC):
                 combination=combination,
                 unique_params=unique_params,
                 extra_params=extra_params,
+                mlflow_run_id=mlflow_run_id,
                 results=results,
                 start_time=start_time,
                 return_results=return_results,
@@ -861,6 +923,7 @@ class BaseExperiment(ABC):
                 combination=combination,
                 unique_params=unique_params,
                 extra_params=extra_params,
+                mlflow_run_id=mlflow_run_id,
                 results=results,
                 start_time=start_time,
                 return_results=return_results,
@@ -874,6 +937,7 @@ class BaseExperiment(ABC):
                 combination=combination,
                 unique_params=unique_params,
                 extra_params=extra_params,
+                mlflow_run_id=mlflow_run_id,
                 **kwargs,
                 **results,
             )
@@ -977,16 +1041,13 @@ class BaseExperiment(ABC):
 
         mlflow_client.update_run(mlflow_run_id, status="RUNNING")
         self._log_run_start_params(mlflow_run_id, **run_unique_params)
-        if extra_params is not None:
-            extra_params["mlflow_run_id"] = mlflow_run_id
-        else:
-            extra_params = {"mlflow_run_id": mlflow_run_id}
 
         return self._train_model(
             combination=combination,
             unique_params=unique_params,
             return_results=return_results,
             extra_params=extra_params,
+            mlflow_run_id=mlflow_run_id,
             **kwargs,
         )
 
@@ -1000,7 +1061,7 @@ class BaseExperiment(ABC):
         **kwargs,
     ):
         combination_dict = dict(zip(combination_names, combination))
-        timeout_combination = extra_params.get("timeout_combination", None)
+        timeout_combination = self.timeout_combination
 
         # this is ugly, but will work for the moment, in summary we want to find mlflow_run_id in extra_params
         # when inside _train_model
@@ -1015,14 +1076,13 @@ class BaseExperiment(ABC):
             combination=combination_dict,
             unique_params=unique_params,
             extra_params=extra_params,
+            mlflow_run_id=mlflow_run_id,
             return_results=return_results,
         )
         kwargs_fn.update(kwargs)
         if self.log_to_mlflow:
-            kwargs_fn["mlflow_run_id"] = mlflow_run_id
             fn = self._run_mlflow_and_train_model
         else:
-            kwargs_fn["extra_params"]["mlflow_run_id"] = mlflow_run_id  # type: ignore
             fn = self._train_model
         if timeout_combination:
             try:
