@@ -2,6 +2,7 @@ from __future__ import annotations
 import re
 from copy import deepcopy
 from typing import Optional, Sequence
+import warnings
 import numpy as np
 import pandas as pd
 from sklearn.compose import ColumnTransformer
@@ -9,8 +10,9 @@ from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import (FunctionTransformer, OrdinalEncoder, OneHotEncoder, StandardScaler, MinMaxScaler,
                                     RobustScaler)
 from sklearn.feature_selection import VarianceThreshold
-from sklearn.pipeline import make_pipeline, Pipeline
+from sklearn.pipeline import make_pipeline
 from sklearn.base import TransformerMixin
+from sklearn.model_selection import train_test_split
 
 
 class OrdinalEncoderMaxUnknownValue(OrdinalEncoder):
@@ -288,79 +290,47 @@ def create_target_preprocess_pipeline(
     else:
         caster = FunctionTransformer(identity)
 
-    preprocess_pipeline = make_pipeline(imputer, categorical_encoder, continuous_scaler, caster).set_output(
-        transform="pandas"
-    )
+    preprocess_pipeline = make_pipeline(imputer, categorical_encoder, continuous_scaler, caster)
+    preprocess_pipeline.set_output(transform="pandas")
     return preprocess_pipeline
 
 
-# def preprocess_dataset(
-#     data: Optional[pd.DataFrame] = None,
-#     target: Optional[pd.DataFrame] = None,
-#     is_train: bool = False,
-#     # if is_train, must provide at least task, categorical_features, continuous_features
-#     # or provide data_preprocess_pipeline and target_preprocess_pipeline
-#     task: Optional[str] = None,
-#     categorical_features: Optional[Sequence[int | str]] = None,
-#     continuous_features: Optional[Sequence[int | str]] = None,
-#     categorical_imputer: Optional[str | int | float] = "most_frequent",
-#     continuous_imputer: Optional[str | int | float] = "median",
-#     categorical_encoder: Optional[str] = "ordinal",
-#     handle_unknown_categories: bool = True,
-#     variance_threshold: Optional[float] = 0.0,
-#     data_scaler: Optional[str] = None,
-#     categorical_type: Optional[type | str] = "float32",
-#     continuous_type: Optional[type | str] = "float32",
-#     target_imputer: Optional[str | int | float] = None,
-#     categorical_target_encoder: Optional[str] = "ordinal",  # only used in classification
-#     categorical_target_min_frequency: Optional[int | float] = 10,  # only used in classification
-#     continuous_target_scaler: Optional[str] = None,  # only used in regression
-#     categorical_target_type: Optional[type | str] = "float32",
-#     continuous_target_type: Optional[type | str] = "float32",
-#     *,
-#     # if is_train is False, must provide the fitted data_preprocess_pipeline and target_preprocess_pipeline
-#     data_preprocess_pipeline: Optional[Pipeline] = None,
-#     target_preprocess_pipeline: Optional[Pipeline] = None,
-# ):
-#     if data is not None:
-#         data.columns = data.columns.astype(str)
-#     if target is not None:
-#         target.columns = target.columns.astype(str)
-#     if is_train:
-#         if data is not None:
-#             if data_preprocess_pipeline is None:
-#                 data_preprocess_pipeline = create_data_preprocess_pipeline(
-#                     categorical_features=categorical_features,
-#                     continuous_features=continuous_features,
-#                     categorical_imputer=categorical_imputer,
-#                     continuous_imputer=continuous_imputer,
-#                     categorical_encoder=categorical_encoder,
-#                     handle_unknown_categories=handle_unknown_categories,
-#                     variance_threshold=variance_threshold,
-#                     scaler=data_scaler,
-#                     categorical_type=categorical_type,
-#                     continuous_type=continuous_type,
-#                 )
-#             data = data_preprocess_pipeline.fit_transform(data)
-#         if target is not None:
-#             if target_preprocess_pipeline is None:
-#                 target_preprocess_pipeline = create_target_preprocess_pipeline(
-#                     task=task,
-#                     imputer=target_imputer,
-#                     categorical_encoder=categorical_target_encoder,
-#                     categorical_min_frequency=categorical_target_min_frequency,
-#                     continuous_scaler=continuous_target_scaler,
-#                     categorical_type=categorical_target_type,
-#                     continuous_type=continuous_target_type,
-#                 )
-#             target = target_preprocess_pipeline.fit_transform(target)
-#     else:
-#         if data is not None:
-#             if data_preprocess_pipeline is None:
-#                 raise ValueError("a fitted data_preprocess_pipeline_ must be provided when is_train is False")
-#             data = data_preprocess_pipeline.transform(data)
-#         if target is not None:
-#             if target_preprocess_pipeline is None:
-#                 raise ValueError("a fitted target_preprocess_pipeline_ must be provided when is_train is False")
-#             target = target_preprocess_pipeline.transform(target)
-#     return data, target, data_preprocess_pipeline, target_preprocess_pipeline
+def train_test_split_forced(train_data, train_target, test_size_pct, random_state=None, stratify=None):
+    if stratify is not None:
+        number_of_classes = max(train_target.nunique())
+        # If we sample less than the number of classes, we cannot have at lest one example per class in the split
+        # For example, we cannot sample 10 examples if we have 11 classes, because we will have at least one
+        # class with 0 examples in the validation set.
+        # NOTE: apparently this does not ensure that we have at least one example per class in the validation set,
+        # but it is the best we can do for now...
+        if test_size_pct * len(train_data) < number_of_classes:
+            test_size_pct = max(train_target.nunique())
+    try:
+        X_train, X_valid, y_train, y_valid = train_test_split(
+            train_data, train_target, test_size=test_size_pct, random_state=random_state, stratify=stratify
+        )
+    except ValueError as exception:
+        warnings.warn(
+            f"Got {exception} when splitting the data, trying to fix it by artificially increasing "
+            f"the number of examples of the least frequent class."
+        )
+        # Probably the error is:
+        # The least populated class in y has only 1 member, which is too few. The minimum number of groups
+        # for any class cannot be less than 2.
+        class_counts = train_target.value_counts()
+        only_1_member_classes = class_counts[class_counts == 1]
+        for only_1_member_class in only_1_member_classes.index:
+            if isinstance(only_1_member_class, tuple):
+                only_1_member_class = only_1_member_class[0]
+            index_of_only_1_member_class = train_target[train_target.iloc[:, 0] == only_1_member_class].index[0]
+            train_data = pd.concat([train_data, train_data.loc[[index_of_only_1_member_class]]]).reset_index(drop=True)
+            train_target = pd.concat([train_target, train_target.loc[[index_of_only_1_member_class]]]).reset_index(
+                drop=True
+            )
+        if stratify is not None:
+            stratify = train_target
+        X_train, X_valid, y_train, y_valid = train_test_split(
+            train_data, train_target, test_size=test_size_pct, random_state=random_state, stratify=stratify
+        )
+    return X_train, X_valid, y_train, y_valid
+
