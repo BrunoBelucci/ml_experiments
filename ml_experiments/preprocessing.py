@@ -296,41 +296,48 @@ def create_target_preprocess_pipeline(
 
 
 def train_test_split_forced(train_data, train_target, test_size_pct, random_state=None, stratify=None):
-    if stratify is not None:
-        number_of_classes = max(train_target.nunique())
-        # If we sample less than the number of classes, we cannot have at lest one example per class in the split
-        # For example, we cannot sample 10 examples if we have 11 classes, because we will have at least one
-        # class with 0 examples in the validation set.
-        # NOTE: apparently this does not ensure that we have at least one example per class in the validation set,
-        # but it is the best we can do for now...
-        if test_size_pct * len(train_data) < number_of_classes:
-            test_size_pct = max(train_target.nunique())
-    try:
-        X_train, X_valid, y_train, y_valid = train_test_split(
-            train_data, train_target, test_size=test_size_pct, random_state=random_state, stratify=stratify
+    if train_target is None:
+        X_train, X_valid = train_test_split(
+            train_data, test_size=test_size_pct, random_state=random_state, stratify=stratify
         )
-    except ValueError as exception:
-        warnings.warn(
-            f"Got {exception} when splitting the data, trying to fix it by artificially increasing "
-            f"the number of examples of the least frequent class."
-        )
-        # Probably the error is:
-        # The least populated class in y has only 1 member, which is too few. The minimum number of groups
-        # for any class cannot be less than 2.
-        class_counts = train_target.value_counts()
-        only_1_member_classes = class_counts[class_counts == 1]
-        for only_1_member_class in only_1_member_classes.index:
-            if isinstance(only_1_member_class, tuple):
-                only_1_member_class = only_1_member_class[0]
-            index_of_only_1_member_class = train_target[train_target.iloc[:, 0] == only_1_member_class].index[0]
-            train_data = pd.concat([train_data, train_data.loc[[index_of_only_1_member_class]]]).reset_index(drop=True)
-            train_target = pd.concat([train_target, train_target.loc[[index_of_only_1_member_class]]]).reset_index(
-                drop=True
-            )
+        y_train = None
+        y_valid = None
+    else:
         if stratify is not None:
-            stratify = train_target
-        X_train, X_valid, y_train, y_valid = train_test_split(
-            train_data, train_target, test_size=test_size_pct, random_state=random_state, stratify=stratify
-        )
+            number_of_classes = max(train_target.nunique())
+            # If we sample less than the number of classes, we cannot have at lest one example per class in the split
+            # For example, we cannot sample 10 examples if we have 11 classes, because we will have at least one
+            # class with 0 examples in the validation set.
+            # NOTE: apparently this does not ensure that we have at least one example per class in the validation set,
+            # but it is the best we can do for now...
+            if test_size_pct * len(train_data) < number_of_classes:
+                test_size_pct = max(train_target.nunique())
+        try:
+            X_train, X_valid, y_train, y_valid = train_test_split(
+                train_data, train_target, test_size=test_size_pct, random_state=random_state, stratify=stratify
+            )
+        except ValueError as exception:
+            warnings.warn(
+                f"Got {exception} when splitting the data, trying to fix it by artificially increasing "
+                f"the number of examples of the least frequent class."
+            )
+            # Probably the error is:
+            # The least populated class in y has only 1 member, which is too few. The minimum number of groups
+            # for any class cannot be less than 2.
+            class_counts = train_target.value_counts()
+            only_1_member_classes = class_counts[class_counts == 1]
+            for only_1_member_class in only_1_member_classes.index:
+                if isinstance(only_1_member_class, tuple):
+                    only_1_member_class = only_1_member_class[0]
+                index_of_only_1_member_class = train_target[train_target.iloc[:, 0] == only_1_member_class].index[0]
+                train_data = pd.concat([train_data, train_data.loc[[index_of_only_1_member_class]]]).reset_index(drop=True)
+                train_target = pd.concat([train_target, train_target.loc[[index_of_only_1_member_class]]]).reset_index(
+                    drop=True
+                )
+            if stratify is not None:
+                stratify = train_target
+            X_train, X_valid, y_train, y_valid = train_test_split(
+                train_data, train_target, test_size=test_size_pct, random_state=random_state, stratify=stratify
+            )
     return X_train, X_valid, y_train, y_valid
 
