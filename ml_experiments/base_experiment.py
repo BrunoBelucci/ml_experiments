@@ -229,7 +229,7 @@ class BaseExperiment(ABC):
         self.parser.add_argument("--do_not_log_to_mlflow", action="store_true")
         self.parser.add_argument("--mlflow_tracking_uri", type=str, default=self.mlflow_tracking_uri)
         self.parser.add_argument("--do_not_check_if_exists", action="store_true")
-        self.parser.add_argument("--raise_on_fit_error", action="store_true")
+        self.parser.add_argument("--raise_on_error", action="store_true")
 
         self.parser.add_argument("--dask_cluster_type", type=str, default=self.dask_cluster_type)
         self.parser.add_argument(
@@ -268,7 +268,7 @@ class BaseExperiment(ABC):
         self.log_to_mlflow = not args.do_not_log_to_mlflow
         self.mlflow_tracking_uri = args.mlflow_tracking_uri
         self.check_if_exists = not args.do_not_check_if_exists
-        self.raise_on_error = args.raise_on_fit_error
+        self.raise_on_error = args.raise_on_error
 
         self.dask_cluster_type = args.dask_cluster_type
         self.n_workers = args.n_workers
@@ -538,12 +538,12 @@ class BaseExperiment(ABC):
     def _on_exception(
         self, combination: dict, unique_params: dict, extra_params: dict, mlflow_run_id: Optional[str] = None, **kwargs
     ):
-        return self._on_exception_or_train_end(combination, unique_params, extra_params=extra_params, **kwargs)
+        return self._on_exception_or_train_end(combination, unique_params, extra_params=extra_params, mlflow_run_id=mlflow_run_id, **kwargs)
 
     def _on_train_end(
         self, combination: dict, unique_params: dict, extra_params: dict, mlflow_run_id: Optional[str] = None, **kwargs
     ):
-        return self._on_exception_or_train_end(combination, unique_params, extra_params=extra_params, **kwargs)
+        return self._on_exception_or_train_end(combination, unique_params, extra_params=extra_params, mlflow_run_id=mlflow_run_id, **kwargs)
 
     def _on_exception_or_train_end(
         self, combination: dict, unique_params: dict, extra_params: dict, mlflow_run_id=None, **kwargs
