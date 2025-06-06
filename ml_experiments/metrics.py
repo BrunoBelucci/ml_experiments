@@ -91,6 +91,8 @@ def get_metric_fn(metric, n_classes=None, pos_label=1):
         precision_recall_fscore_support, average="binary", labels=labels, pos_label=pos_label
     )
     precision_recall_fscore_support_binary_fn.__name__ = "precision_recall_fscore_support_binary"
+    precision_recall_curve_fn = partial(precision_recall_curve, pos_label=pos_label)
+    precision_recall_curve_fn.__name__ = "precision_recall_curve"
     map_metric_to_func = {
         "mse": (mean_squared_error, False, False),
         "rmse": (root_mean_squared_error, False, False),
@@ -100,7 +102,6 @@ def get_metric_fn(metric, n_classes=None, pos_label=1):
 
         "accuracy": (accuracy_score, False, True),
         "balanced_accuracy": (balanced_accuracy_score, False, True),
-        "precision_recall_curve": (precision_recall_curve, True, True),
         "auc_binary": (roc_auc_score, True, True),
 
 
@@ -134,6 +135,7 @@ def get_metric_fn(metric, n_classes=None, pos_label=1):
         "precision_recall_fscore_support_weighted": (precision_recall_fscore_support_weighted_fn, False, True),
         "precision_recall_fscore_support_all": (precision_recall_fscore_support_all_fn, False, True),
         "precision_recall_fscore_support_binary": (precision_recall_fscore_support_binary_fn, False, True),
+        "precision_recall_curve": (precision_recall_curve_fn, True, True),
     }
     metric_fn, need_proba, higher_is_better = map_metric_to_func[metric]
     return metric_fn, need_proba, higher_is_better
