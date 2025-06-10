@@ -1,4 +1,4 @@
-from abc import ABC, abstractmethod
+from abc import ABC
 from typing import Literal, Optional
 import optuna
 from optuna.samplers import BaseSampler
