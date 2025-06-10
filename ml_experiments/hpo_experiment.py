@@ -225,7 +225,7 @@ class HPOExperiment(BaseExperiment, ABC):
 
             if self.dask_cluster_type is not None:
                 storage = DaskStorage(client=get_client())
-                tuner_kwargs["client"] = "worker_client"
+                tuner_kwargs["dask_client"] = "worker_client"
                 tuner_kwargs["storage"] = storage
                 tuner_kwargs["max_concurrent_trials"] = self.max_concurrent_trials
                 tuner_kwargs["resources_per_task"] = {

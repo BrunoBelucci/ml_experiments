@@ -219,8 +219,12 @@ class DaskOptunaTuner(OptunaTuner):
     def get_storage(self):
         if self.storage is None:
             storage = InMemoryStorage()
+        elif isinstance(self.storage, type) and issubclass(self.storage, BaseStorage):
+            storage = self.storage(**self.storage_kwargs)
         elif isinstance(self.storage, str):
-            if self.storage == 'dask':
+            if self.storage == 'in_memory':
+                storage = InMemoryStorage()
+            elif self.storage == 'dask':
                 if self.dask_client is None or self.dask_client == 'worker_client':
                     dask_client = get_client()
                 elif isinstance(self.dask_client, str):
@@ -230,10 +234,11 @@ class DaskOptunaTuner(OptunaTuner):
                 storage = DaskStorage(client=dask_client)
             else:
                 raise ValueError(f'Invalid storage string: {self.storage}')
-        elif isinstance(self.storage, type) and issubclass(self.storage, BaseStorage):
-            storage = self.storage(**self.storage_kwargs)
+        elif isinstance(self.storage, BaseStorage):
+            storage = self.storage
         else:
             raise ValueError(f'Invalid storage type: {type(self.storage)}')
+        return storage
         return storage
 
     def run_concurrent_trials(self, client, training_fn, search_space, get_trial_fn, max_trials_to_run, **kwargs):
