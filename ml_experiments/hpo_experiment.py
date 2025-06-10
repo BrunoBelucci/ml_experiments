@@ -277,8 +277,9 @@ class HPOExperiment(BaseExperiment, ABC):
                 results['evaluate_model_return'] = {}
 
         # we do not need to keep all the results (data, model...), only the evaluation results
-        keep_results = {'evaluate_model_return': results['evaluate_model_return'],
-                        'trial_combination': trial_combination, 'work_dir': work_dir}
+        keep_results = results['evaluate_model_return'].copy()
+        keep_results["trial_combination"] = trial_combination
+        keep_results["work_dir"] = work_dir
 
         if parent_run_id is not None:
             eval_result = results["evaluate_model_return"].copy()
@@ -420,9 +421,8 @@ class HPOExperiment(BaseExperiment, ABC):
 
         best_trial = study.best_trial
         best_trial_result = best_trial.user_attrs.get('result', dict())
-        best_evaluate_model_return = best_trial_result.get('evaluate_model_return', dict())
-        best_metric_results = {f'best_{metric}': value for metric, value in best_evaluate_model_return.items()
-                               if not metric.startswith('elapsed_')}
+        best_metric_results = {f'best_{metric}': value for metric, value in best_trial_result.items()
+                               if not metric.startswith('elapsed_') and metric not in ['trial_combination', 'work_dir']}
         # if best_metric_results is empty it means that every trial failed, we will raise an exception
         if not best_metric_results:
             raise ValueError('Every trial failed, no best model was found')
