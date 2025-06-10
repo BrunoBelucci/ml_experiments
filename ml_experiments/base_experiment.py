@@ -77,7 +77,7 @@ class BaseExperiment(ABC):
             save_root_dir: Optional[str | Path] = None,
             clean_work_dir: bool = True,
             raise_on_fit_error: bool = False,
-            parser: Optional = None,
+            parser: Optional[argparse.ArgumentParser] = None,
             error_score: str = 'raise',
             timeout_fit: Optional[int] = None,
             timeout_combination: Optional[int] = None,
