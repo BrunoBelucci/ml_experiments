@@ -114,7 +114,10 @@ class OptunaTuner(ABC):
         trials_numbers = []
         trial = self.get_trial(study=self.study, search_space=search_space, get_trial_fn=get_trial_fn)
         result = training_fn(trial=trial, **kwargs)
-        trial_number = trial.number
+        if isinstance(trial, dict):
+            trial_number = trial["trial"].number
+        else:
+            trial_number = trial.number
         trials_numbers.append(trial_number)
         results.append(result)
         return trials_numbers, results
