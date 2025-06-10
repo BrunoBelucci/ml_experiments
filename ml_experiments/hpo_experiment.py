@@ -243,9 +243,9 @@ class HPOExperiment(BaseExperiment, ABC):
 
         return results
 
-    def _training_fn(self, trial_dict:dict, single_experiment: BaseExperiment, unique_params: dict, 
+    def _training_fn(self, trial:dict, single_experiment: BaseExperiment, unique_params: dict, 
                      extra_params: dict, **kwargs):
-        trial_combination = trial_dict["trial_combination"]
+        trial_combination = trial["trial_combination"]
         combination_values = list(trial_combination.values())
         combination_names = list(trial_combination.keys())
         extra_params = extra_params.copy()
@@ -283,7 +283,7 @@ class HPOExperiment(BaseExperiment, ABC):
         if parent_run_id is not None:
             eval_result = results["evaluate_model_return"].copy()
             eval_result.pop('elapsed_time', None)
-            mlflow.log_metrics(eval_result, run_id=parent_run_id, step=trial_dict["trial"].number)
+            mlflow.log_metrics(eval_result, run_id=parent_run_id, step=trial["trial"].number)
         return keep_results
 
     def _get_optuna_params(
@@ -319,18 +319,6 @@ class HPOExperiment(BaseExperiment, ABC):
     @abstractmethod
     def _load_single_experiment(self, combination: dict, unique_params: dict, extra_params: dict, **kwargs):
         raise NotImplementedError('This method must be implemented in the subclass')
-
-    def _get_tell_metric_from_results(self, results):
-        evaluate_model_return = results.get('evaluate_model_return', {})
-        hpo_metric = evaluate_model_return.get(self.hpo_metric, None)
-        if hpo_metric is None:
-            warn(f'hpo_metric {self.hpo_metric} not found in evaluate_model_return, available metrics are '
-                 f'{evaluate_model_return.keys()}')
-            if self.direction == 'maximize':
-                return -float('inf')
-            else:
-                return float('inf')
-        return evaluate_model_return[self.hpo_metric]
 
     def _fit_model(self, combination: dict, unique_params: dict, extra_params: dict, **kwargs):
         model_nickname = combination['model_nickname']
@@ -390,7 +378,7 @@ class HPOExperiment(BaseExperiment, ABC):
             search_space=search_space,
             direction=self.direction,
             metric=self.hpo_metric,
-            enqueue_configurations=default_values,
+            enqueue_configurations=[default_values],
             get_trial_fn=get_trial_fn,
         )
 
@@ -422,7 +410,6 @@ class HPOExperiment(BaseExperiment, ABC):
                             mlflow_client.set_tag(child_run_id, 'raised_exception', True)
                             mlflow_client.set_tag(child_run_id, 'EXCEPTION', 'Elapsed time timed out.')
                             mlflow_client.set_terminated(child_run_id, status='FAILED')
-        
         return dict(study=study)
 
     def _get_metrics(self, combination: dict, unique_params: dict, extra_params: dict, **kwargs):
