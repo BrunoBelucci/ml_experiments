@@ -1,6 +1,7 @@
 import subprocess
-
 import mlflow
+from time import perf_counter
+from memory_profiler import memory_usage
 
 
 def flatten_dict(dct, parent_key='', sep='/'):
@@ -91,3 +92,66 @@ def set_mlflow_tracking_uri_check_if_exists(experiment_name, mlflow_tracking_uri
         return run
     else:
         return None
+
+def profile_time(func, return_in_dict=True, enable=True):
+    """
+    Decorator to profile the execution time of a function.
+    
+    Parameters:
+    func (callable): Function to be profiled.
+    return_in_dict (bool): If True and if the function returns a dictionary, the execution time will be added to 
+    the dictionary, otherwise it will be returned as a tuple.
+    enable (bool): If False, disables profiling.
+    
+    Returns:
+    callable: Wrapped function that profiles execution time.
+    """
+    if not enable:
+        return func
+    def wrapper(*args, **kwargs):
+        start_time = perf_counter()
+        result = func(*args, **kwargs)
+        elapsed_time = perf_counter() - start_time
+        if return_in_dict and isinstance(result, dict):
+            result['elapsed_time'] = elapsed_time
+            return result
+        else:
+            return result, elapsed_time
+    return wrapper
+
+def profile_memory(func, return_in_dict=True, enable=True, **kwargs):
+    """
+    Decorator to profile the memory usage of a function.
+    
+    Parameters:
+    func (callable): Function to be profiled.
+    return_in_dict (bool): If True and if the function returns a dictionary, the memory usage will be added to 
+    the dictionary, otherwise it will be returned as a tuple.
+    enable (bool): If False, disables profiling.
+    **kwargs: Additional keyword arguments for memory_usage function.
+    
+    Returns:
+    callable: Wrapped function that profiles memory usage.
+    """
+    if not enable:
+        return func
+    max_usage = kwargs.pop('max_usage', True)
+    retval = kwargs.pop('retval', True)
+    def wrapper(*args, **kwargs):
+        if retval:
+            mem_usage, result = memory_usage((func, args, kwargs), max_usage=max_usage, retval=retval, **kwargs)
+        else:
+            mem_usage = memory_usage((func, args, kwargs), max_usage=max_usage, retval=retval, **kwargs)
+            result = None
+        if return_in_dict and isinstance(result, dict):
+            if max_usage:
+                result['max_memory_used'] = mem_usage
+            else:
+                result['memory_usage'] = mem_usage
+            return result
+        else:
+            if retval:
+                return result, mem_usage
+            else:
+                return mem_usage
+    return wrapper
