@@ -22,6 +22,7 @@ import json
 from abc import ABC, abstractmethod
 from ml_experiments.utils import flatten_dict, get_git_revision_hash, set_mlflow_tracking_uri_check_if_exists
 from func_timeout import func_timeout, FunctionTimedOut
+from memory_profiler import memory_usage
 try:
     import torch
     torch_available = True
@@ -82,6 +83,7 @@ class BaseExperiment(ABC):
             timeout_fit: Optional[int] = None,
             timeout_combination: Optional[int] = None,
             verbose: int = 1,
+            profile_memory: bool = False,
             # mlflow specific
             log_to_mlflow: bool = True,
             mlflow_tracking_uri: str = 'sqlite:///' + str(Path.cwd().resolve()) + '/ml_experiments.db',
@@ -230,6 +232,7 @@ class BaseExperiment(ABC):
         self.timeout_fit = timeout_fit
         self.timeout_combination = timeout_combination
         self.verbose = verbose
+        self.profile_memory = profile_memory
         self.client = None
         self.logger_filename = None
 
@@ -300,6 +303,9 @@ class BaseExperiment(ABC):
         self.parser.add_argument('--timeout_fit', type=int, default=self.timeout_fit)
         self.parser.add_argument('--timeout_combination', type=int, default=self.timeout_combination)
         self.parser.add_argument('--verbose', type=int, default=self.verbose)
+        self.parser.add_argument('--profile_memory', action='store_true',
+                                 help='If True, profile the memory usage of the model during each step of training. '
+                                      'Warning: this may slow down the training process significantly. ')
 
         self.parser.add_argument('--log_dir', type=Path, default=self.log_dir)
         self.parser.add_argument('--log_file_name', type=str, default=self.log_file_name)
@@ -347,6 +353,7 @@ class BaseExperiment(ABC):
         self.timeout_fit = args.timeout_fit
         self.timeout_combination = args.timeout_combination
         self.verbose = args.verbose
+        self.profile_memory = args.profile_memory
 
         self.log_dir = args.log_dir
         self.log_file_name = args.log_file_name
@@ -607,6 +614,9 @@ class BaseExperiment(ABC):
                 elapsed_time = value.get('elapsed_time', None)
                 if elapsed_time is not None:
                     log_metrics[key + '_elapsed_time'] = elapsed_time
+                max_memory_used = value.get('max_memory_used', None)
+                if max_memory_used is not None:
+                    log_metrics[key + '_max_memory_used'] = max_memory_used
 
         # log evaluation results
         eval_results_dict = kwargs.get('evaluate_model_return', {}).copy()
@@ -675,15 +685,25 @@ class BaseExperiment(ABC):
         os.makedirs(work_dir, exist_ok=True)
         return work_dir
 
+
+
     def _add_elapsed_time(self, fn, fn_return_dict=True, *args, **kwargs):
         start_time = time.perf_counter()
-        result = fn(*args, **kwargs)
+        if self.profile_memory:
+            mem_usage, result = memory_usage((fn, args, kwargs), interval=0.1, max_usage=True, retval=True)
+        else:
+            result = fn(*args, **kwargs)
+            mem_usage = None
         elapsed_time = time.perf_counter() - start_time
         if fn_return_dict:
             if result is not None:
                 result['elapsed_time'] = elapsed_time
+                if mem_usage is not None:
+                    result['max_memory_used'] = mem_usage
             else:
                 result = {'elapsed_time': elapsed_time}
+                if mem_usage is not None:
+                    result['max_memory_used'] = mem_usage
             return result
         else:
             return result, elapsed_time
