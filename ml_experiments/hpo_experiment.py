@@ -11,7 +11,7 @@ from ml_experiments.tuners import OptunaTuner, DaskOptunaTuner
 from sklearn.utils import check_random_state
 import numpy as np
 from func_timeout import func_timeout, FunctionTimedOut
-from ml_experiments.utils import flatten_dict
+from ml_experiments.utils import flatten_dict, unflatten_dict, update_recursively
 from functools import partial
 
 
@@ -299,7 +299,8 @@ class HPOExperiment(BaseExperiment, ABC):
         conditional_params = {name: fn(trial) for name, fn
                               in conditional_distributions_search_space.items()}
         trial_model_params = trial.params
-        trial_model_params.update(model_params.copy())
+        trial_model_params = unflatten_dict(trial_model_params)
+        trial_model_params = update_recursively(trial_model_params, model_params.copy())
         trial_seed_model = random_state.randint(0, 10000)
         trial_combination = combination.copy()
         trial_combination.pop('model_params')
@@ -323,7 +324,7 @@ class HPOExperiment(BaseExperiment, ABC):
         fit_params = combination['fit_params']
         seed_model = combination['seed_model']
         mlflow_run_id = extra_params.get('mlflow_run_id', None)
-        model_cls = self.models_dict[model_nickname][0]
+        _, _, search_space, default_values = self.models_dict[model_nickname]
         tuner: OptunaTuner = kwargs.get('load_model_return', {}).get('tuner', None)
 
         if isinstance(tuner.sampler, optuna.samplers.GridSampler):
@@ -334,8 +335,6 @@ class HPOExperiment(BaseExperiment, ABC):
         else:
             n_trials = self.n_trials
 
-        # objective and search space (distribution)
-        search_space, default_values = model_cls.create_search_space()
         random_state = check_random_state(seed_model)
         if mlflow_run_id is not None:
             parent_run_id = mlflow_run_id
