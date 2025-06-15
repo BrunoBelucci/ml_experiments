@@ -1,5 +1,6 @@
 from abc import ABC
 from typing import Literal, Optional
+from warnings import warn
 import optuna
 from optuna.samplers import BaseSampler
 from optuna.pruners import BasePruner
@@ -172,7 +173,14 @@ class OptunaTuner(ABC):
                 storage.set_trial_user_attr(trial_id, 'result', result)
                 if isinstance(result, dict):
                     if metric is not None:
-                        tell_value = result[metric]
+                        tell_value = result.get(metric, None)
+                        if tell_value is None:
+                            warn(f'metric {metric} not found in dict returned by training_fn, available metrics are '
+                                f'{result.keys()}')
+                            if direction == 'maximize':
+                                tell_value = -float('inf')
+                            else:
+                                tell_value = float('inf')
                     else:
                         raise ValueError("Metric must be specified if training function returns a dict")
                 else:
