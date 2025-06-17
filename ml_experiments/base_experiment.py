@@ -19,7 +19,7 @@ from resource import getrusage, RUSAGE_SELF
 from abc import ABC, abstractmethod
 from ml_experiments.utils import flatten_dict, get_git_revision_hash, set_mlflow_tracking_uri_check_if_exists
 from func_timeout import func_timeout, FunctionTimedOut
-
+from memory_profiler import memory_usage
 try:
     import torch
 
@@ -190,6 +190,8 @@ class BaseExperiment(ABC):
         self.timeout_fit = timeout_fit
         self.timeout_combination = timeout_combination
         self.verbose = verbose
+        self.profile_time = profile_time
+        self.profile_memory = profile_memory
         self.client = None
         self.logger_filename = None
 
@@ -252,6 +254,7 @@ class BaseExperiment(ABC):
         self.timeout_fit = args.timeout_fit
         self.timeout_combination = args.timeout_combination
         self.verbose = args.verbose
+        self.profile_memory = args.profile_memory
 
         self.log_dir = args.log_dir
         self.log_file_name = args.log_file_name
@@ -650,20 +653,27 @@ class BaseExperiment(ABC):
 
         # log elapsed times
         for key, value in kwargs.items():
-            if key == "total_elapsed_time":
-                log_metrics["total_elapsed_time"] = value
+            if key == 'total_elapsed_time':
+                log_metrics['total_elapsed_time'] = value
+            elif key.startswith('max_memory_used_'):
+                log_metrics[key] = value
+            elif key.startswith('max_cuda_memory_'):
+                log_metrics[key] = value
             elif isinstance(value, dict):
                 elapsed_time = value.get("elapsed_time", None)
                 if elapsed_time is not None:
-                    log_metrics[key + "_elapsed_time"] = elapsed_time
+                    log_metrics[key + '_elapsed_time'] = elapsed_time
+                max_memory_used = value.get('max_memory_used', None)
+                if max_memory_used is not None:
+                    log_metrics[key + '_max_memory_used'] = max_memory_used
 
         # log evaluation results
         eval_results_dict = kwargs.get("evaluate_model_return", {}).copy()
         eval_results_dict.pop("elapsed_time", None)
         log_metrics.update(eval_results_dict)
 
-        # log memory usage in MB (in linux getrusage seems to returns in KB)
-        log_metrics["max_memory_used"] = getrusage(RUSAGE_SELF).ru_maxrss / 1000
+        # log total max memory usage in MB (in linux getrusage seems to returns in KB)
+        log_metrics['max_memory_used'] = getrusage(RUSAGE_SELF).ru_maxrss / 1000
 
         if torch_available:
             if torch.cuda.is_available():
@@ -730,30 +740,10 @@ class BaseExperiment(ABC):
         os.makedirs(work_dir, exist_ok=True)
         return work_dir
 
-    def _add_elapsed_time(self, fn, fn_return_dict=True, *args, **kwargs):
-        start_time = time.perf_counter()
-        result = fn(*args, **kwargs)
-        elapsed_time = time.perf_counter() - start_time
-        if fn_return_dict:
-            if result is not None:
-                result["elapsed_time"] = elapsed_time
-            else:
-                result = {"elapsed_time": elapsed_time}
-            return result
-        else:
-            return result, elapsed_time
-
-    def _treat_train_model_exception(
-        self,
-        exception,
-        combination: dict,
-        unique_params: dict,
-        extra_params: dict,
-        results: dict,
-        start_time: float,
-        return_results: bool = False,
-        **kwargs,
-    ):
+    def _treat_train_model_exception(self, exception, combination: dict, unique_params: dict,
+                                     extra_params: dict, results: dict,
+                                     start_time: float, return_results: bool = False,
+                                     **kwargs):
         total_elapsed_time = time.perf_counter() - start_time
         results["total_elapsed_time"] = total_elapsed_time
         if isinstance(exception, FunctionTimedOut):
@@ -804,173 +794,85 @@ class BaseExperiment(ABC):
             timeout_fit = unique_params["timeout_fit"]
             log_and_print_msg("Running...", verbose=self.verbose, verbose_level=1, **combination, **unique_params)
 
-            results["on_train_start_return"] = self._add_elapsed_time(
-                self._on_train_start,
-                combination=combination,
-                unique_params=unique_params,
-                extra_params=extra_params,
-                mlflow_run_id=mlflow_run_id,
-                **kwargs,
-                **results,
+            results["on_train_start_return"] = self._on_train_start(
+                combination=combination, unique_params=unique_params, extra_params=extra_params, **kwargs, **results
             )
 
             # load data
-            results["before_load_data_return"] = self._add_elapsed_time(
-                self._before_load_data,
-                combination=combination,
-                unique_params=unique_params,
-                extra_params=extra_params,
-                mlflow_run_id=mlflow_run_id,
-                **kwargs,
-                **results,
+            results["before_load_data_return"] = self._before_load_data(
+                combination=combination, unique_params=unique_params, extra_params=extra_params, **kwargs, **results
             )
 
-            results["load_data_return"] = self._add_elapsed_time(
-                self._load_data,
-                combination=combination,
-                unique_params=unique_params,
-                extra_params=extra_params,
-                mlflow_run_id=mlflow_run_id,
-                **kwargs,
-                **results,
+            results["load_data_return"] = self._load_data(
+                combination=combination, unique_params=unique_params, extra_params=extra_params, **kwargs, **results
             )
-            results["after_load_data_return"] = self._add_elapsed_time(
-                self._after_load_data,
-                combination=combination,
-                unique_params=unique_params,
-                extra_params=extra_params,
-                mlflow_run_id=mlflow_run_id,
-                **kwargs,
-                **results,
+            results["after_load_data_return"] = self._after_load_data(
+                combination=combination, unique_params=unique_params, extra_params=extra_params, **kwargs, **results
             )
 
             # load model
-            results["before_load_model_return"] = self._add_elapsed_time(
-                self._before_load_model,
-                combination=combination,
-                unique_params=unique_params,
-                extra_params=extra_params,
-                mlflow_run_id=mlflow_run_id,
-                **kwargs,
-                **results,
+            results["before_load_model_return"] = self._before_load_model(
+                combination=combination, unique_params=unique_params, extra_params=extra_params, **kwargs, **results
             )
-            results["load_model_return"] = self._add_elapsed_time(
-                self._load_model,
-                combination=combination,
-                unique_params=unique_params,
-                extra_params=extra_params,
-                mlflow_run_id=mlflow_run_id,
-                **kwargs,
-                **results,
+            results["load_model_return"] = self._load_model(
+                combination=combination, unique_params=unique_params, extra_params=extra_params, **kwargs, **results
             )
-            results["after_load_model_return"] = self._add_elapsed_time(
-                self._after_load_model,
-                combination=combination,
-                unique_params=unique_params,
-                extra_params=extra_params,
-                mlflow_run_id=mlflow_run_id,
-                **kwargs,
-                **results,
+            results["after_load_model_return"] = self._after_load_model(
+                combination=combination, unique_params=unique_params, extra_params=extra_params, **kwargs, **results
             )
 
             # get metrics
-            results["before_get_metrics_return"] = self._add_elapsed_time(
-                self._before_get_metrics,
-                combination=combination,
-                unique_params=unique_params,
-                extra_params=extra_params,
-                mlflow_run_id=mlflow_run_id,
-                **kwargs,
-                **results,
+            results["before_get_metrics_return"] = self._before_get_metrics(
+                combination=combination, unique_params=unique_params, extra_params=extra_params, **kwargs, **results
             )
-            results["get_metrics_return"] = self._add_elapsed_time(
-                self._get_metrics,
-                combination=combination,
-                unique_params=unique_params,
-                extra_params=extra_params,
-                mlflow_run_id=mlflow_run_id,
-                **kwargs,
-                **results,
+            results["get_metrics_return"] = self._get_metrics(
+                combination=combination, unique_params=unique_params, extra_params=extra_params, **kwargs, **results
             )
-            results["after_get_metrics_return"] = self._add_elapsed_time(
-                self._after_get_metrics,
-                combination=combination,
-                unique_params=unique_params,
-                extra_params=extra_params,
-                mlflow_run_id=mlflow_run_id,
-                **kwargs,
-                **results,
+            results["after_get_metrics_return"] = self._after_get_metrics(
+                combination=combination, unique_params=unique_params, extra_params=extra_params, **kwargs, **results
             )
 
             # fit model
-            results["before_fit_model_return"] = self._add_elapsed_time(
-                self._before_fit_model,
-                combination=combination,
-                unique_params=unique_params,
-                extra_params=extra_params,
-                mlflow_run_id=mlflow_run_id,
-                **kwargs,
-                **results,
+            results["before_fit_model_return"] = self._before_fit_model(
+                combination=combination, unique_params=unique_params, extra_params=extra_params, **kwargs, **results
             )
+
+            results['max_memory_used_before_fit'] = getrusage(RUSAGE_SELF).ru_maxrss / 1000
+            if torch_available:
+                if torch.cuda.is_available():
+                    results['max_cuda_memory_reserved_before_fit'] = torch.cuda.max_memory_reserved() / (1024 ** 2)  # in MB
+                    results['max_cuda_memory_allocated_before_fit'] = torch.cuda.max_memory_allocated() / (1024 ** 2)  # in MB
 
             if timeout_fit is not None:
                 kwargs_fit_model = dict(
-                    fn=self._fit_model,
-                    combination=combination,
-                    unique_params=unique_params,
-                    extra_params=extra_params,
-                    mlflow_run_id=mlflow_run_id,
+                    fn=self._fit_model, combination=combination, unique_params=unique_params, extra_params=extra_params
                 )
                 kwargs_fit_model.update(kwargs)
                 kwargs_fit_model.update(results)
-                results["fit_model_return"] = func_timeout(timeout_fit, self._add_elapsed_time, kwargs=kwargs_fit_model)
+                results["fit_model_return"] = func_timeout(timeout_fit, self._fit_model, kwargs=kwargs_fit_model)
             else:
-                results["fit_model_return"] = self._add_elapsed_time(
-                    self._fit_model,
-                    combination=combination,
-                    unique_params=unique_params,
-                    extra_params=extra_params,
-                    mlflow_run_id=mlflow_run_id,
-                    **kwargs,
-                    **results,
+                results["fit_model_return"] = self._fit_model(
+                    combination=combination, unique_params=unique_params, extra_params=extra_params, **kwargs, **results
                 )
-            results["after_fit_model_return"] = self._add_elapsed_time(
-                self._after_fit_model,
-                combination=combination,
-                unique_params=unique_params,
-                extra_params=extra_params,
-                mlflow_run_id=mlflow_run_id,
-                **kwargs,
-                **results,
+            results["after_fit_model_return"] = self._after_fit_model(
+                combination=combination, unique_params=unique_params, extra_params=extra_params, **kwargs, **results
             )
 
+            results['max_memory_used_after_fit'] = getrusage(RUSAGE_SELF).ru_maxrss / 1000
+            if torch_available:
+                if torch.cuda.is_available():
+                    results['max_cuda_memory_reserved_after_fit'] = torch.cuda.max_memory_reserved() / (1024**2)  # in MB
+                    results['max_cuda_memory_allocated_after_fit'] = torch.cuda.max_memory_allocated() / (1024**2)  # in MB
+
             # evaluate model
-            results["before_evaluate_model_return"] = self._add_elapsed_time(
-                self._before_evaluate_model,
-                combination=combination,
-                unique_params=unique_params,
-                extra_params=extra_params,
-                mlflow_run_id=mlflow_run_id,
-                **kwargs,
-                **results,
+            results["before_evaluate_model_return"] = self._before_evaluate_model(
+                combination=combination, unique_params=unique_params, extra_params=extra_params, **kwargs, **results
             )
-            results["evaluate_model_return"] = self._add_elapsed_time(
-                self._evaluate_model,
-                combination=combination,
-                unique_params=unique_params,
-                extra_params=extra_params,
-                mlflow_run_id=mlflow_run_id,
-                **kwargs,
-                **results,
+            results["evaluate_model_return"] = self._evaluate_model(
+                combination=combination, unique_params=unique_params, extra_params=extra_params, **kwargs, **results
             )
-            results["after_evaluate_model_return"] = self._add_elapsed_time(
-                self._after_evaluate_model,
-                combination=combination,
-                unique_params=unique_params,
-                extra_params=extra_params,
-                mlflow_run_id=mlflow_run_id,
-                **kwargs,
-                **results,
+            results["after_evaluate_model_return"] = self._after_evaluate_model(
+                combination=combination, unique_params=unique_params, extra_params=extra_params, **kwargs, **results
             )
         except FunctionTimedOut as exception:
             # we need to catch FunctionTimedOut separately because it is not a subclass of Exception
@@ -999,24 +901,12 @@ class BaseExperiment(ABC):
             )
         else:
             total_elapsed_time = time.perf_counter() - start_time
-            results["total_elapsed_time"] = total_elapsed_time
-            results["on_train_end_return"] = self._add_elapsed_time(
-                self._on_train_end,
-                combination=combination,
-                unique_params=unique_params,
-                extra_params=extra_params,
-                mlflow_run_id=mlflow_run_id,
-                **kwargs,
-                **results,
+            results['total_elapsed_time'] = total_elapsed_time
+            results["on_train_end_return"] = self._on_train_end(
+                combination=combination, unique_params=unique_params, extra_params=extra_params, **kwargs, **results
             )
-            log_and_print_msg(
-                "Finished!",
-                verbose=self.verbose,
-                verbose_level=1,
-                total_elapsed_time=total_elapsed_time,
-                **combination,
-                **unique_params,
-            )
+            log_and_print_msg('Finished!', verbose=self.verbose, verbose_level=1,
+                              total_elapsed_time=total_elapsed_time, **combination, **unique_params)
             if return_results:
                 return results
             else:
