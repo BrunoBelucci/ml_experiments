@@ -12,6 +12,7 @@ from tqdm.auto import tqdm
 from ml_experiments.utils import flatten_dict
 from dask.distributed import Client
 from distributed import get_client, worker_client
+from func_timeout import func_timeout, FunctionTimedOut
 
 
 def discretize_search_space(search_space):
@@ -60,7 +61,8 @@ class OptunaTuner(ABC):
             storage: Optional[str | type[BaseStorage]] | BaseStorage = None,
             storage_kwargs: Optional[dict] = None,
             n_trials: int = 100,
-            timeout_total: Optional[int] = None,
+            timeout_total: int = 0,
+            timeout_trial: int = 0,
             seed: Optional[int] = None,
     ):
         self.sampler = sampler
@@ -71,6 +73,7 @@ class OptunaTuner(ABC):
         self.storage_kwargs = storage_kwargs if storage_kwargs is not None else {}
         self.n_trials = n_trials
         self.timeout_total = timeout_total
+        self.timeout_trial = timeout_trial
         self.seed = seed
         self.grid_search_stopped = False
         self.timed_out = False
@@ -152,7 +155,15 @@ class OptunaTuner(ABC):
         results = []
         trials_numbers = []
         trial = self.get_trial(study=self.study, search_space=search_space, get_trial_fn=get_trial_fn)
-        result = training_fn(trial=trial, **kwargs)
+        if self.timeout_trial > 0:
+            kwargs_fn = kwargs.copy()
+            kwargs_fn["trial"] = trial
+            try:
+                result = func_timeout(self.timeout_trial, training_fn, kwargs=kwargs_fn)
+            except FunctionTimedOut:
+                result = None
+        else:
+            result = training_fn(trial=trial, **kwargs)
         if isinstance(trial, dict):
             trial_number = trial["trial"].number
         else:
@@ -223,7 +234,7 @@ class OptunaTuner(ABC):
                     break
             pbar.update(n_trials_run)
             elapsed_time = perf_counter() - start_time
-            if self.timeout_total is not None:
+            if self.timeout_total > 0:
                 if elapsed_time > self.timeout_total:
                     print(f"Timeout reached: {self.timeout_total} seconds")
                     timed_out = True
@@ -278,7 +289,17 @@ class DaskOptunaTuner(OptunaTuner):
         else:
             raise ValueError(f'Invalid storage type: {type(self.storage)}')
         return storage
-        return storage
+
+    def _training_fn_with_timeout(self, training_fn):
+        def wrapped_training_fn(*args, **kwargs):
+            if self.timeout_trial > 0:
+                try:
+                    return func_timeout(self.timeout_trial, training_fn, args=args, kwargs=kwargs)
+                except FunctionTimedOut:
+                    return None
+            else:
+                return training_fn(*args, **kwargs)
+        return wrapped_training_fn
 
     def run_concurrent_trials(self, client, training_fn, search_space, get_trial_fn, max_trials_to_run, **kwargs):
         futures = []
@@ -295,8 +316,14 @@ class DaskOptunaTuner(OptunaTuner):
             if trial_key is None:
                 trial_key = f"trial-{trial_number}"
             trials_numbers.append(trial_number)
+            training_fn_with_timeout = self._training_fn_with_timeout(training_fn)
             future = client.submit(
-                training_fn, resources=self.resources_per_task, key=trial_key, pure=False, trial=trial, **kwargs
+                training_fn_with_timeout,
+                resources=self.resources_per_task,
+                key=trial_key,
+                pure=False,
+                trial=trial,
+                **kwargs,
             )
             futures.append(future)
         results = client.gather(futures)
