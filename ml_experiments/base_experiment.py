@@ -5,7 +5,7 @@ import time
 from multiprocessing import cpu_count
 from pathlib import Path
 from shutil import rmtree, copytree
-from typing import Optional
+from typing import Iterable, Optional
 import mlflow
 import os
 import logging
@@ -19,7 +19,7 @@ from resource import getrusage, RUSAGE_SELF
 from abc import ABC, abstractmethod
 from ml_experiments.utils import flatten_dict, get_git_revision_hash, set_mlflow_tracking_uri_check_if_exists
 from func_timeout import func_timeout, FunctionTimedOut
-from memory_profiler import memory_usage
+from itertools import product
 try:
     import torch
 
@@ -303,7 +303,21 @@ class BaseExperiment(ABC):
         self._unpack_parser()
 
     @abstractmethod
-    def _get_combinations(self) -> tuple[list[list], list]:
+    def _get_combinations_names(self) -> list[str]:
+        """Get the names of the attributes that will be used to create the combinations.
+
+        They will be used to create the combinations and will be used to create the combination dictionary.
+        For example, if we want to train several models with all the commbinations of the following:
+        models: A, B
+        datasets: 1, 2, 3
+        seeds: 42, 4200
+        we would return the combination_names as:
+        combination_names = ["model", "dataset", "seed"]
+        """
+        combination_names = []
+        return combination_names
+
+    def _get_combinations(self) -> tuple[list[Iterable] | list[tuple], list]:
         """Get the combinations and combination_names of the experiment.
 
         They are considered to be unique and we will iterate over them to train and evaluate several models.
@@ -338,8 +352,9 @@ class BaseExperiment(ABC):
         and the combination_names as:
         combination_names = ["model", "dataset", "seed"]
         """
-        combinations = []
-        combination_names = []
+        combination_names = self._get_combinations_names()
+        values = [list(getattr(self, name)) if not isinstance(getattr(self, name), list) else getattr(self, name) for name in combination_names]
+        combinations = list(product(*values))
         return combinations, combination_names
 
     @abstractmethod
@@ -1260,10 +1275,9 @@ class BaseExperiment(ABC):
                 )
 
         return total_combinations, n_combinations_successfully_completed, n_combinations_failed, n_combinations_none
-
-    def run_from_cli(self):
-        """Run the entire pipeline."""
-        self._treat_parser()
+    
+    def run(self):
+        """Run without argpasrse."""
         os.makedirs(self.work_root_dir, exist_ok=True)
         if self.save_root_dir:
             os.makedirs(self.save_root_dir, exist_ok=True)
@@ -1288,3 +1302,8 @@ class BaseExperiment(ABC):
             none=n_combinations_none,
         )
         logging.shutdown()
+
+    def run_from_cli(self):
+        """Run the entire pipeline with argparse."""
+        self._treat_parser()
+        self.run()
