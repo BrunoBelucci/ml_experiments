@@ -368,7 +368,12 @@ class BaseExperiment(ABC):
         combination_names = ["model", "dataset", "seed"]
         """
         combination_names = self._get_combinations_names()
-        values = [list(getattr(self, name)) if not isinstance(getattr(self, name), list) else getattr(self, name) for name in combination_names]
+        values = []
+        for name in combination_names:
+            value = getattr(self, name)
+            if not isinstance(value, list):
+                value = [value]
+            values.append(value)
         combinations = list(product(*values))
         return combinations, combination_names
 
