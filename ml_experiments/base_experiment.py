@@ -10,14 +10,12 @@ import mlflow
 import os
 import logging
 import warnings
-import numpy as np
 from distributed import WorkerPlugin, Worker, Client
 import dask
 from dask.distributed import LocalCluster, get_worker, as_completed
 from dask_jobqueue import SLURMCluster
 from tqdm.auto import tqdm
 from resource import getrusage, RUSAGE_SELF
-import json
 from abc import ABC, abstractmethod
 from ml_experiments.utils import flatten_dict, get_git_revision_hash, set_mlflow_tracking_uri_check_if_exists
 from func_timeout import func_timeout, FunctionTimedOut
@@ -94,8 +92,6 @@ class BaseExperiment(ABC):
         # gpu specific
         n_gpus_per_worker: float = 0.0,
         n_gpus_per_task: Optional[float] = None,
-        # combination
-        combinations: Optional[list[tuple]] = None,
     ):
         """Base experiment.
 
@@ -174,8 +170,6 @@ class BaseExperiment(ABC):
         self.n_gpus_per_worker = n_gpus_per_worker
         self._n_gpus_per_task = n_gpus_per_task
 
-        self.combinations = combinations
-
         self.experiment_name = experiment_name
         if isinstance(log_dir, str):
             log_dir = Path(log_dir)
@@ -246,7 +240,6 @@ class BaseExperiment(ABC):
         self.parser.add_argument("--dask_address", type=str, default=self.dask_address)
         self.parser.add_argument("--n_gpus_per_worker", type=float, default=self.n_gpus_per_worker)
         self.parser.add_argument("--n_gpus_per_task", type=float, default=self.n_gpus_per_task)
-        self.parser.add_argument("--combinations", type=json.loads, default=self.combinations)
 
     @abstractmethod
     def _unpack_parser(self):
@@ -299,7 +292,6 @@ class BaseExperiment(ABC):
         self.dask_address = args.dask_address
         self.n_gpus_per_worker = args.n_gpus_per_worker
         self._n_gpus_per_task = args.n_gpus_per_task
-        self.combinations = args.combinations
         return args
 
     def _treat_parser(self):
@@ -937,7 +929,19 @@ class BaseExperiment(ABC):
             dict(
                 git_hash=get_git_revision_hash(),
                 cuda_available=cuda_available,
-                # dask parameters
+                log_dir=str(self.log_dir.resolve()),
+                work_root_dir=str(self.work_root_dir.resolve()),
+                timeout_fit=self.timeout_fit,
+                timeout_combination=self.timeout_combination,
+            )
+        )
+        if self.log_file_name is not None:
+            params_to_log["log_file_name"] = self.log_file_name
+        if self.save_root_dir is not None:
+            params_to_log["save_root_dir"] = str(self.save_root_dir.resolve())
+        if self.dask_cluster_type is not None:
+            params_to_log.update(
+                # # dask parameters
                 dask_cluster_type=self.dask_cluster_type,
                 n_workers=self.n_workers,
                 n_cores_per_worker=self.n_cores_per_worker,
@@ -952,9 +956,7 @@ class BaseExperiment(ABC):
                 n_gpus_per_worker=self.n_gpus_per_worker,
                 n_gpus_per_task=self.n_gpus_per_task,
             )
-        )
-        tags_to_log = dict(
-            # slurm parameters
+        slurm_parameters = dict(
             SLURM_JOB_ID=os.getenv("SLURM_JOB_ID", None),
             SLURM_STEP_ID=os.getenv("SLURM_STEP_ID", None),
             SLURM_ARRAY_JOB_ID=os.getenv("SLURM_ARRAY_JOB_ID", None),
@@ -962,6 +964,7 @@ class BaseExperiment(ABC):
             SLURM_LOCALID=os.getenv("SLURM_LOCALID", None),
             SLURMD_NODENAME=os.getenv("SLURMD_NODENAME", None),
         )
+        tags_to_log = {f"{key}": value for key, value in slurm_parameters.items() if value is not None}
         mlflow.log_params(params_to_log, run_id=mlflow_run_id)
         mlflow_client = mlflow.client.MlflowClient(tracking_uri=self.mlflow_tracking_uri)
         for tag, value in tags_to_log.items():
