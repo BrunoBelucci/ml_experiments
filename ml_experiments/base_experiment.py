@@ -785,8 +785,8 @@ class BaseExperiment(ABC):
             exception_to_log = "FunctionTimedOut"  # otherwise it is difficult to read the log
         else:
             exception_to_log = exception
-        results["on_exception_return"] = self._add_elapsed_time(
-            self._on_exception,
+
+        ret = self._on_exception(
             exception=exception_to_log,
             combination=combination,
             unique_params=unique_params,
@@ -794,6 +794,9 @@ class BaseExperiment(ABC):
             **kwargs,
             **results,
         )
+        if ret:
+            results["on_exception_return"] = ret
+
         log_and_print_msg(
             "Error while running",
             verbose=self.verbose,
@@ -807,6 +810,7 @@ class BaseExperiment(ABC):
             raise exception
         if return_results:
             try:
+                results["Finished"] = False
                 return results
             except UnboundLocalError:
                 return {}
@@ -829,48 +833,75 @@ class BaseExperiment(ABC):
             timeout_fit = unique_params["timeout_fit"]
             log_and_print_msg("Running...", verbose=self.verbose, verbose_level=1, **combination, **unique_params)
 
-            results["on_train_start_return"] = self._on_train_start(
+            ret = self._on_train_start(
                 combination=combination, unique_params=unique_params, extra_params=extra_params, **kwargs, **results
             )
+            if ret:
+                results["on_train_start_return"] = ret
 
             # load data
-            results["before_load_data_return"] = self._before_load_data(
+            ret = self._before_load_data(
                 combination=combination, unique_params=unique_params, extra_params=extra_params, **kwargs, **results
             )
+            if ret:
+                results["before_load_data_return"] = ret
 
-            results["load_data_return"] = self._load_data(
+            ret = self._load_data(
                 combination=combination, unique_params=unique_params, extra_params=extra_params, **kwargs, **results
             )
-            results["after_load_data_return"] = self._after_load_data(
+            if ret:
+                results["load_data_return"] = ret
+
+            ret = self._after_load_data(
                 combination=combination, unique_params=unique_params, extra_params=extra_params, **kwargs, **results
             )
+            if ret:
+                results["after_load_data_return"] = ret
 
             # load model
-            results["before_load_model_return"] = self._before_load_model(
+            ret = self._before_load_model(
                 combination=combination, unique_params=unique_params, extra_params=extra_params, **kwargs, **results
             )
-            results["load_model_return"] = self._load_model(
+            if ret:
+                results["before_load_model_return"] = ret
+
+            ret = self._load_model(
                 combination=combination, unique_params=unique_params, extra_params=extra_params, **kwargs, **results
             )
-            results["after_load_model_return"] = self._after_load_model(
+            if ret:
+                results["load_model_return"] = ret
+
+            ret = self._after_load_model(
                 combination=combination, unique_params=unique_params, extra_params=extra_params, **kwargs, **results
             )
+            if ret:
+                results["after_load_model_return"] = ret
 
             # get metrics
-            results["before_get_metrics_return"] = self._before_get_metrics(
+            ret = self._before_get_metrics(
                 combination=combination, unique_params=unique_params, extra_params=extra_params, **kwargs, **results
             )
-            results["get_metrics_return"] = self._get_metrics(
+            if ret:
+                results["before_get_metrics_return"] = ret
+
+            ret = self._get_metrics(
                 combination=combination, unique_params=unique_params, extra_params=extra_params, **kwargs, **results
             )
-            results["after_get_metrics_return"] = self._after_get_metrics(
+            if ret:
+                results["get_metrics_return"] = ret
+
+            ret = self._after_get_metrics(
                 combination=combination, unique_params=unique_params, extra_params=extra_params, **kwargs, **results
             )
+            if ret:
+                results["after_get_metrics_return"] = ret
 
             # fit model
-            results["before_fit_model_return"] = self._before_fit_model(
+            ret = self._before_fit_model(
                 combination=combination, unique_params=unique_params, extra_params=extra_params, **kwargs, **results
             )
+            if ret:
+                results["before_fit_model_return"] = ret
 
             results['max_memory_used_before_fit'] = getrusage(RUSAGE_SELF).ru_maxrss / 1000
             if torch_available:
@@ -884,14 +915,21 @@ class BaseExperiment(ABC):
                 )
                 kwargs_fit_model.update(kwargs)
                 kwargs_fit_model.update(results)
-                results["fit_model_return"] = func_timeout(timeout_fit, self._fit_model, kwargs=kwargs_fit_model)
+                ret = func_timeout(timeout_fit, self._fit_model, kwargs=kwargs_fit_model)
+                if ret:
+                    results["fit_model_return"] = ret
             else:
-                results["fit_model_return"] = self._fit_model(
+                ret = self._fit_model(
                     combination=combination, unique_params=unique_params, extra_params=extra_params, **kwargs, **results
                 )
-            results["after_fit_model_return"] = self._after_fit_model(
+                if ret:
+                    results["fit_model_return"] = ret
+
+            ret = self._after_fit_model(
                 combination=combination, unique_params=unique_params, extra_params=extra_params, **kwargs, **results
             )
+            if ret:
+                results["after_fit_model_return"] = ret
 
             results['max_memory_used_after_fit'] = getrusage(RUSAGE_SELF).ru_maxrss / 1000
             if torch_available:
@@ -900,15 +938,23 @@ class BaseExperiment(ABC):
                     results['max_cuda_memory_allocated_after_fit'] = torch.cuda.max_memory_allocated() / (1024**2)  # in MB
 
             # evaluate model
-            results["before_evaluate_model_return"] = self._before_evaluate_model(
+            ret = self._before_evaluate_model(
                 combination=combination, unique_params=unique_params, extra_params=extra_params, **kwargs, **results
             )
-            results["evaluate_model_return"] = self._evaluate_model(
+            if ret:
+                results["before_evaluate_model_return"] = ret
+
+            ret = self._evaluate_model(
                 combination=combination, unique_params=unique_params, extra_params=extra_params, **kwargs, **results
             )
-            results["after_evaluate_model_return"] = self._after_evaluate_model(
+            if ret:
+                results["evaluate_model_return"] = ret
+
+            ret = self._after_evaluate_model(
                 combination=combination, unique_params=unique_params, extra_params=extra_params, **kwargs, **results
             )
+            if ret:
+                results["after_evaluate_model_return"] = ret
         except FunctionTimedOut as exception:
             # we need to catch FunctionTimedOut separately because it is not a subclass of Exception
             return self._treat_train_model_exception(
@@ -937,12 +983,16 @@ class BaseExperiment(ABC):
         else:
             total_elapsed_time = time.perf_counter() - start_time
             results['total_elapsed_time'] = total_elapsed_time
-            results["on_train_end_return"] = self._on_train_end(
+
+            ret = self._on_train_end(
                 combination=combination, unique_params=unique_params, extra_params=extra_params, **kwargs, **results
             )
+            if ret:
+                results["on_train_end_return"] = ret
             log_and_print_msg('Finished!', verbose=self.verbose, verbose_level=1,
                               total_elapsed_time=total_elapsed_time, **combination, **unique_params)
             if return_results:
+                results["Finished"] = True
                 return results
             else:
                 return True
@@ -1109,8 +1159,9 @@ class BaseExperiment(ABC):
             mlflow_client.update_run(mlflow_run_id, status="SCHEDULED")
             return mlflow_run_id
 
-    def _run_experiment(self, client=None):
+    def _run_experiment(self, client=None, return_results=False):
         """Run the experiment."""
+        results = []
         combinations, combination_names = self._get_combinations()
         unique_params = self._get_unique_params()
         extra_params = self._get_extra_params()
@@ -1217,6 +1268,7 @@ class BaseExperiment(ABC):
                             combination_names=combination_names,
                             unique_params=unique_params,
                             extra_params=extra_params,
+                            return_results=return_results,
                         )
                         future.worker = worker_name
                         futures.append(future)
@@ -1231,7 +1283,12 @@ class BaseExperiment(ABC):
 
                     # wait for at least one task to finish
                     completed_future = next(as_completed(futures))
-                    combination_success = completed_future.result()
+                    result = completed_future.result()
+                    if not return_results:
+                        combination_success = result
+                    else:
+                        combination_success = result.get("Finished", None)
+                        results.append(result)
                     if combination_success is True:
                         n_combinations_successfully_completed += 1
                     elif combination_success is False:
@@ -1273,12 +1330,19 @@ class BaseExperiment(ABC):
                     )
                     combination = list(combination) + [run_id]
                     combination_names.append("mlflow_run_id")
-                combination_success = self._run_combination(
+                result = self._run_combination(
                     *combination,
                     combination_names=combination_names,
                     unique_params=unique_params,
                     extra_params=extra_params,
+                    return_results=return_results,
                 )
+                if not return_results:
+                    combination_success = result
+                else:
+                    combination_success = result.get("Finished", None)
+                    results.append(result)
+
                 if combination_success is True:
                     n_combinations_successfully_completed += 1
                 elif combination_success is False:
@@ -1294,24 +1358,29 @@ class BaseExperiment(ABC):
                     none=n_combinations_none,
                 )
 
-        return total_combinations, n_combinations_successfully_completed, n_combinations_failed, n_combinations_none
+        if return_results:
+            return results
+        else:
+            return total_combinations, n_combinations_successfully_completed, n_combinations_failed, n_combinations_none
 
-    def run(self):
+    def run(self, return_results=False):
         """Run without argpasrse."""
         os.makedirs(self.work_root_dir, exist_ok=True)
         if self.save_root_dir:
             os.makedirs(self.save_root_dir, exist_ok=True)
         self._setup_logger()
-        start_time = time.perf_counter()
+        
         if self.dask_cluster_type is not None:
             client = self._setup_dask(self.n_workers, self.dask_cluster_type, self.dask_address)
         else:
             client = None
-        total_combinations, n_combinations_successfully_completed, n_combinations_failed, n_combinations_none = (
-            self._run_experiment(client=client)
-        )
-        total_time = time.perf_counter() - start_time
-        log_and_print_msg(
+        if not return_results:
+            start_time = time.perf_counter()
+            total_combinations, n_combinations_successfully_completed, n_combinations_failed, n_combinations_none = (
+                self._run_experiment(client=client, return_results=return_results)
+            )
+            total_time = time.perf_counter() - start_time
+            log_and_print_msg(
             "Experiment finished!",
             verbose=self.verbose,
             verbose_level=1,
@@ -1320,10 +1389,15 @@ class BaseExperiment(ABC):
             sucessfully_completed=n_combinations_successfully_completed,
             failed=n_combinations_failed,
             none=n_combinations_none,
-        )
-        logging.shutdown()
+            )
+            logging.shutdown()
+            return True
+        else:
+            results = self._run_experiment(client=client, return_results=return_results)
+            return results
 
     def run_from_cli(self):
         """Run the entire pipeline with argparse."""
         self._treat_parser()
-        self.run()
+        _ = self.run(return_results=False)
+        
