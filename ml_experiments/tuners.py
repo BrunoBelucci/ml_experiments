@@ -1,4 +1,6 @@
 from abc import ABC
+import numpy as np
+from math import floor
 from typing import Literal, Optional
 import optuna
 from optuna.samplers import BaseSampler
@@ -10,6 +12,42 @@ from tqdm.auto import tqdm
 from ml_experiments.utils import flatten_dict
 from dask.distributed import Client
 from distributed import get_client, worker_client
+
+
+def discretize_search_space(search_space):
+    discretized_search_space = {}
+    for param_name, optuna_distribution in search_space.items():
+        if isinstance(optuna_distribution, optuna.distributions.BaseDistribution):
+            if isinstance(optuna_distribution, optuna.distributions.CategoricalDistribution):
+                discretized_search_space[param_name] = optuna_distribution.choices
+            else:
+                if isinstance(optuna_distribution, optuna.distributions.IntDistribution):
+                    dtype = np.int64
+                elif isinstance(optuna_distribution, optuna.distributions.FloatDistribution):
+                    dtype = np.float64
+                else:
+                    raise NotImplementedError(f"Distribution {type(optuna_distribution)} not implemented")
+                low = optuna_distribution.low
+                high = optuna_distribution.high
+                step = optuna_distribution.step
+                if step is None:
+                    step = 1
+                log = optuna_distribution.log
+                if not log:
+                    n_samples = floor((high - low) / step) + 1
+                    # use linspace instead of arange to avoid floating point errors as mentioned in
+                    # https://numpy.org/doc/stable/reference/generated/numpy.arange.html
+                    discretized_search_space[param_name] = np.linspace(
+                        low, high, n_samples, dtype=dtype, endpoint=True
+                    ).tolist()
+                else:
+                    n_samples = floor(np.log(high / low) / np.log(step)) + 1
+                    discretized_search_space[param_name] = np.logspace(
+                        np.log10(low), np.log10(high), n_samples, dtype=dtype, endpoint=True
+                    ).tolist()
+        else:
+            pass
+    return discretized_search_space
 
 
 class OptunaTuner(ABC):
@@ -39,16 +77,15 @@ class OptunaTuner(ABC):
         self.n_trials_effective = None
         self.study = None
 
-    def get_sampler(self):
+    def get_sampler(self, search_space):
         if isinstance(self.sampler, str):
             if self.sampler == 'tpe':
                 sampler = optuna.samplers.TPESampler(multivariate=True, constant_liar=True, seed=self.seed)
             elif self.sampler == 'random':
                 sampler = optuna.samplers.RandomSampler(seed=self.seed)
-            # elif self.sampler == 'grid':
-            #     search_space, default_values = model_cls.create_search_space()
-            #     search_space = discretize_search_space(search_space)
-            #     sampler = optuna.samplers.GridSampler(search_space=search_space, seed=self.seed_model)
+            elif self.sampler == 'grid':
+                search_space = discretize_search_space(search_space)
+                sampler = optuna.samplers.GridSampler(search_space=search_space, seed=self.seed)
             else:
                 raise NotImplementedError(f'Sampler {self.sampler} not implemented for optuna')
         elif isinstance(self.sampler, type) and issubclass(self.sampler, BaseSampler):
@@ -59,16 +96,18 @@ class OptunaTuner(ABC):
             raise ValueError(f'Invalid sampler type: {type(self.sampler)}')
         return sampler
 
-    def get_pruner(self):
+    def get_pruner(self, hyperband_max_resources=None):
         if isinstance(self.pruner, str):
-            # if self.pruner == 'hyperband':
-            #     max_resources = self.hyperband_max_resources
-            #     n_brackets = 5
-            #     min_resources = 1
-            #     # the following should give us the desired number of brackets
-            #     reduction_factor = floor((max_resources / min_resources) ** (1 / (n_brackets - 1)))
-            #     pruner = optuna.pruners.HyperbandPruner(min_resource=min_resources, max_resource=max_resources,
-            #                                             reduction_factor=reduction_factor)
+            if self.pruner == 'hyperband':
+                if hyperband_max_resources is None:
+                    raise ValueError("hyperband_max_resources must be specified for HyperbandPruner")
+                max_resources = hyperband_max_resources
+                n_brackets = 5
+                min_resources = 1
+                # the following should give us the desired number of brackets
+                reduction_factor = floor((max_resources / min_resources) ** (1 / (n_brackets - 1)))
+                pruner = optuna.pruners.HyperbandPruner(min_resource=min_resources, max_resource=max_resources,
+                                                        reduction_factor=reduction_factor)
             if self.pruner == 'sha':
                 pruner = optuna.pruners.SuccessiveHalvingPruner(min_resource=10)
             elif (self.pruner).lower() == 'none':
@@ -128,9 +167,9 @@ class OptunaTuner(ABC):
         )
 
     def tune(self, training_fn, search_space, direction="minimize", metric=None, enqueue_configurations=None, 
-             get_trial_fn=None, **kwargs):
-        sampler = self.get_sampler()
-        pruner = self.get_pruner()
+             get_trial_fn=None, hyperband_max_resources=None, **kwargs):
+        sampler = self.get_sampler(search_space=search_space)
+        pruner = self.get_pruner(hyperband_max_resources=hyperband_max_resources)
         storage = self.get_storage()
         self.study = optuna.create_study(storage=storage, sampler=sampler, pruner=pruner, direction=direction)
         if enqueue_configurations is not None and not isinstance(sampler, optuna.samplers.GridSampler):

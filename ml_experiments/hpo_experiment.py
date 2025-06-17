@@ -7,46 +7,12 @@ import mlflow
 from warnings import warn
 from mlflow.utils.mlflow_tags import MLFLOW_PARENT_RUN_ID
 from ml_experiments.base_experiment import BaseExperiment
-from ml_experiments.tuners import OptunaTuner, DaskOptunaTuner
+from ml_experiments.tuners import OptunaTuner, DaskOptunaTuner, discretize_search_space
 from sklearn.utils import check_random_state
 import numpy as np
 from func_timeout import func_timeout, FunctionTimedOut
 from ml_experiments.utils import flatten_dict
 from functools import partial
-
-
-def discretize_search_space(search_space):
-    discretized_search_space = {}
-    for param_name, optuna_distribution in search_space.items():
-        if isinstance(optuna_distribution, optuna.distributions.BaseDistribution):
-            if isinstance(optuna_distribution, optuna.distributions.CategoricalDistribution):
-                discretized_search_space[param_name] = optuna_distribution.choices
-            else:
-                if isinstance(optuna_distribution, optuna.distributions.IntDistribution):
-                    dtype = np.int64
-                elif isinstance(optuna_distribution, optuna.distributions.FloatDistribution):
-                    dtype = np.float64
-                else:
-                    raise NotImplementedError(f'Distribution {type(optuna_distribution)} not implemented')
-                low = optuna_distribution.low
-                high = optuna_distribution.high
-                step = optuna_distribution.step
-                if step is None:
-                    step = 1
-                log = optuna_distribution.log
-                if not log:
-                    n_samples = floor((high - low) / step) + 1
-                    # use linspace instead of arange to avoid floating point errors as mentioned in
-                    # https://numpy.org/doc/stable/reference/generated/numpy.arange.html
-                    discretized_search_space[param_name] = np.linspace(low, high, n_samples, dtype=dtype,
-                                                                       endpoint=True).tolist()
-                else:
-                    n_samples = floor(np.log(high / low) / np.log(step)) + 1
-                    discretized_search_space[param_name] = np.logspace(np.log10(low), np.log10(high), n_samples,
-                                                                       dtype=dtype, endpoint=True).tolist()
-        else:
-            pass
-    return discretized_search_space
 
 
 class HPOExperiment(BaseExperiment, ABC):
