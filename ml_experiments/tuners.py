@@ -164,7 +164,7 @@ class OptunaTuner(ABC):
             except FunctionTimedOut:
                 result = None
         else:
-            result = training_fn(trial=trial, **kwargs)
+            result = training_fn(trial, **kwargs)
         if isinstance(trial, dict):
             trial_number = trial["trial"].number
         else:
