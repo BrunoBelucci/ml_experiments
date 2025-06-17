@@ -299,6 +299,82 @@ class BaseExperiment(ABC):
         self._add_arguments_to_parser()
         self._unpack_parser()
 
+    @abstractmethod
+    def _get_combinations(self) -> tuple[list[list], list]:
+        """Get the combinations and combination_names of the experiment.
+
+        They are considered to be unique and we will iterate over them to train and evaluate several models.
+        They will be used for example to check if we have already run this experiment (if check_if_exists is enabled).
+        They are tipically the models or
+        models hyperparameters, the datasets or datasets folds, seeds, etc. They will be combined in a dictionary
+        that will often be called combination. Note that we will iterate through the combinations list, so we want
+        the configuration for each run to be present as a list of iterables, for example:
+
+        suppose we want to train several models with all the commbinations of the following:
+
+        models: A, B
+        datasets: 1, 2, 3
+        seeds: 42, 4200
+
+        we would return all the combinations as:
+        combinations = [
+            ["A", 1, 42],
+            ["A", 1, 4200],
+            ["A", 2, 42],
+            ["A", 2, 4200],
+            ["A", 3, 42],
+            ["A", 3, 4200],
+            ["B", 1, 42],
+            ["B", 1, 4200],
+            ["B", 2, 42],
+            ["B", 2, 4200],
+            ["B", 3, 42],
+            ["B", 3, 4200],
+        ]
+
+        and the combination_names as:
+        combination_names = ["model", "dataset", "seed"]
+        """
+        combinations = []
+        combination_names = []
+        return combinations, combination_names
+
+    @abstractmethod
+    def _get_unique_params(self):
+        """Get the unique parameters of the experiment. They are considered to be unique but they are the same for
+        every combination. They will be used for example to check if we have already run this experiment (if
+        check_if_exists is enabled). They are tipically the evaluation strategy, dataset configuration, etc."""
+        unique_params = dict(
+            timeout_fit=self.timeout_fit,
+            timeout_combination=self.timeout_combination,
+        )
+        if self.dask_cluster_type is not None:
+            unique_params.update(
+                # # dask parameters
+                dask_cluster_type=self.dask_cluster_type,
+                n_workers=self.n_workers,
+                n_cores_per_worker=self.n_cores_per_worker,
+                n_processes_per_worker=self.n_processes_per_worker,
+                n_threads_per_worker=self.n_threads_per_worker,
+                n_processes_per_task=self.n_processes_per_task,
+                n_cores_per_task=self.n_cores_per_task,
+                n_threads_per_task=self.n_threads_per_task,
+                dask_memory=self.dask_memory,
+                dask_job_extra_directives=self.dask_job_extra_directives,
+                dask_address=self.dask_address,
+                n_gpus_per_worker=self.n_gpus_per_worker,
+                n_gpus_per_task=self.n_gpus_per_task,
+            )
+        return unique_params
+
+    @abstractmethod
+    def _get_extra_params(self):
+        """Get the extra parameters of the experiment. They are not considered to be unique to the experiment, so they
+        will not be used to check if we have already run this experiment (if check_if_exists is enabled). They are
+        typically the maximum time to train a model, the timeout for the experiment, the number of workers, etc."""
+        extra_params = dict()
+        return extra_params
+
     def _setup_logger(self, log_dir=None, filemode="w"):
         """Setup the logger."""
         if log_dir is None:
@@ -725,7 +801,7 @@ class BaseExperiment(ABC):
         start_time = time.perf_counter()
         try:
 
-            timeout_fit = self.timeout_fit
+            timeout_fit = unique_params["timeout_fit"]
             log_and_print_msg("Running...", verbose=self.verbose, verbose_level=1, **combination, **unique_params)
 
             results["on_train_start_return"] = self._add_elapsed_time(
@@ -961,31 +1037,12 @@ class BaseExperiment(ABC):
                 cuda_available=cuda_available,
                 log_dir=str(self.log_dir.resolve()),
                 work_root_dir=str(self.work_root_dir.resolve()),
-                timeout_fit=self.timeout_fit,
-                timeout_combination=self.timeout_combination,
             )
         )
         if self.log_file_name is not None:
             params_to_log["log_file_name"] = self.log_file_name
         if self.save_root_dir is not None:
             params_to_log["save_root_dir"] = str(self.save_root_dir.resolve())
-        if self.dask_cluster_type is not None:
-            params_to_log.update(
-                # # dask parameters
-                dask_cluster_type=self.dask_cluster_type,
-                n_workers=self.n_workers,
-                n_cores_per_worker=self.n_cores_per_worker,
-                n_processes_per_worker=self.n_processes_per_worker,
-                n_threads_per_worker=self.n_threads_per_worker,
-                n_processes_per_task=self.n_processes_per_task,
-                n_cores_per_task=self.n_cores_per_task,
-                n_threads_per_task=self.n_threads_per_task,
-                dask_memory=self.dask_memory,
-                dask_job_extra_directives=self.dask_job_extra_directives,
-                dask_address=self.dask_address,
-                n_gpus_per_worker=self.n_gpus_per_worker,
-                n_gpus_per_task=self.n_gpus_per_task,
-            )
         slurm_parameters = dict(
             SLURM_JOB_ID=os.getenv("SLURM_JOB_ID", None),
             SLURM_STEP_ID=os.getenv("SLURM_STEP_ID", None),
@@ -1064,7 +1121,7 @@ class BaseExperiment(ABC):
         **kwargs,
     ):
         combination_dict = dict(zip(combination_names, combination))
-        timeout_combination = self.timeout_combination
+        timeout_combination = unique_params["timeout_combination"]
 
         # this is ugly, but will work for the moment, in summary we want to find mlflow_run_id in extra_params
         # when inside _train_model
@@ -1099,62 +1156,6 @@ class BaseExperiment(ABC):
                     return False
         else:
             return fn(**kwargs_fn)  # type: ignore
-
-    @abstractmethod
-    def _get_combinations(self) -> tuple[list[list], list]:
-        """Get the combinations and combination_names of the experiment.
-
-        They are considered to be unique and we will iterate over them to train and evaluate several models.
-        They will be used for example to check if we have already run this experiment (if check_if_exists is enabled).
-        They are tipically the models or
-        models hyperparameters, the datasets or datasets folds, seeds, etc. They will be combined in a dictionary
-        that will often be called combination. Note that we will iterate through the combinations list, so we want
-        the configuration for each run to be present as a list of iterables, for example:
-        
-        suppose we want to train several models with all the commbinations of the following:
-
-        models: A, B
-        datasets: 1, 2, 3
-        seeds: 42, 4200
-
-        we would return all the combinations as:
-        combinations = [
-            ["A", 1, 42],
-            ["A", 1, 4200],
-            ["A", 2, 42],
-            ["A", 2, 4200],
-            ["A", 3, 42],
-            ["A", 3, 4200],
-            ["B", 1, 42],
-            ["B", 1, 4200],
-            ["B", 2, 42],
-            ["B", 2, 4200],
-            ["B", 3, 42],
-            ["B", 3, 4200],
-        ]
-
-        and the combination_names as:
-        combination_names = ["model", "dataset", "seed"]
-        """
-        combinations = []
-        combination_names = []
-        return combinations, combination_names
-
-    @abstractmethod
-    def _get_unique_params(self):
-        """Get the unique parameters of the experiment. They are considered to be unique but they are the same for
-        every combination. They will be used for example to check if we have already run this experiment (if
-        check_if_exists is enabled). They are tipically the evaluation strategy, dataset configuration, etc."""
-        unique_params = dict()
-        return unique_params
-
-    @abstractmethod
-    def _get_extra_params(self):
-        """Get the extra parameters of the experiment. They are not considered to be unique to the experiment, so they
-        will not be used to check if we have already run this experiment (if check_if_exists is enabled). They are
-        typically the maximum time to train a model, the timeout for the experiment, the number of workers, etc."""
-        extra_params = dict()
-        return extra_params
 
     def _create_mlflow_run(self, *combination, combination_names: list[str], unique_params: dict, extra_params: dict):
         """Create a mlflow run."""

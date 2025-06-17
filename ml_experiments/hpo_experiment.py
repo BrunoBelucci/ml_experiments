@@ -1,16 +1,12 @@
 from abc import ABC, abstractmethod
-from math import floor
-import optuna
+from typing import Optional
+from optuna.study import Study
 from optuna_integration import DaskStorage
 from distributed import get_client
 import mlflow
-from warnings import warn
 from mlflow.utils.mlflow_tags import MLFLOW_PARENT_RUN_ID
 from ml_experiments.base_experiment import BaseExperiment
-from ml_experiments.tuners import OptunaTuner, DaskOptunaTuner, discretize_search_space
-from sklearn.utils import check_random_state
-import numpy as np
-from func_timeout import func_timeout, FunctionTimedOut
+from ml_experiments.tuners import OptunaTuner, DaskOptunaTuner
 from ml_experiments.utils import flatten_dict
 from functools import partial
 
@@ -23,87 +19,17 @@ class HPOExperiment(BaseExperiment, ABC):
         hpo_framework: str = "optuna",
         # general
         n_trials: int = 30,
-        timeout_hpo: int = 10 * 60 * 60,
-        timeout_trial: int = 2 * 60 * 60,
+        timeout_hpo: int = 0,
+        timeout_trial: int = 0,
         max_concurrent_trials: int = 1,
+        hpo_seed: int = 0,
         # optuna
         sampler: str = "tpe",
-        pruner: str = "hyperband",
+        pruner: str = "none",
         direction: str = "minimize",
         hpo_metric: str = 'validation_score',
         **kwargs,
     ):
-        """HPO experiment.
-
-        This class allows to perform experiments with HPO for tabular data.It allows to perform experiments with
-        different models, datasets and
-        resampling strategies. It also allows to log the results to mlflow and to parallelize the experiments with
-        dask. We can also run a single experiment with the run_* meth
-
-        Parameters
-        ----------
-        models_nickname :
-            The nickname of the models to be used in the experiment. The nickname must be one of the keys of the
-            models_dict.
-        seeds_models :
-            The seeds to be used in the models.
-        n_jobs :
-            Number of threads/cores to be used by the model if it supports it. Defaults to 1.
-        models_params :
-            Dictionary with the parameters of the models. The keys must be the nickname of the model and the values
-            must be a dictionary with the parameters of the model. In case only one dictionary is passed, it will be
-            used for all models. Defaults to None.
-        fits_params :
-            Dictionary with the parameters of the fits. The keys must be the nickname of the model and the values
-            must be a dictionary with the parameters of the fit. In case only one dictionary is passed, it will be
-            used for all models. Defaults to None.
-        datasets_names_or_ids :
-            The names or ids of the datasets to be used in the experiment. Defaults to None.
-        seeds_datasets :
-            The seeds to be used in the datasets. Defaults to None.
-        resample_strategy :
-            The resampling strategy to be used. Defaults to 'k-fold_cv'.
-        k_folds :
-            The number of folds to be used in the k-fold cross-validation. Defaults to 10.
-        folds :
-            The folds to be used in the resampling. Defaults to None.
-        pct_test :
-            The percentage of the test set. Defaults to 0.2.
-        validation_resample_strategy :
-            The resampling strategy to be used to create the validation set. Defaults to 'next_fold'.
-        pct_validation :
-            The percentage of the validation set. Defaults to 0.1.
-        tasks_ids :
-            The ids of the tasks to be used in the experiment. Defaults to None.
-        task_repeats :
-            The repeats to be used in the tasks. Defaults to None.
-        task_folds :
-            The folds to be used in the tasks. Defaults to None.
-        task_samples :
-            The samples to be used in the tasks. Defaults to None.
-        experiment_name :
-            The name of the experiment. Defaults to 'base_experiment'.
-        create_validation_set :
-            If True, create a validation set. Defaults to False.
-        models_dict :
-            The dictionary with the models to be used in the experiment, it must be a dictionary with the keys being
-            the nickname of the model and the values being another dictionary with the class of the model and the
-            parameters of the model.
-        hpo_framework :
-            The hyperparameter optimization framework to be used. It must be 'optuna' for the moment.
-        n_trials :
-            The number of trials to be run.
-        timeout_hpo :
-            The timeout of the experiment in seconds.
-        timeout_trial :
-            The timeout of each trial in seconds.
-        max_concurrent_trials :
-            The maximum number of concurrent trials that can be run.
-        sampler :
-            The sampler to be used in the hyperparameter optimization. It can be 'tpe' or 'random'.
-        pruner :
-            The pruner to be used in the hyperparameter optimization. It can be 'hyperband', 'sha' or None.
-        """
         super().__init__(*args, **kwargs)
         self.hpo_framework = hpo_framework
         # general
@@ -111,6 +37,7 @@ class HPOExperiment(BaseExperiment, ABC):
         self.timeout_hpo = timeout_hpo
         self.timeout_trial = timeout_trial
         self.max_concurrent_trials = max_concurrent_trials
+        self.hpo_seed = hpo_seed
         # optuna
         self.sampler = sampler
         self.pruner = pruner
@@ -120,12 +47,15 @@ class HPOExperiment(BaseExperiment, ABC):
 
     def _add_arguments_to_parser(self):
         super()._add_arguments_to_parser()
+        if self.parser is None:
+            raise ValueError('Parser is not initialized, please call the constructor of the class first')
         self.parser.add_argument('--hpo_framework', type=str, default=self.hpo_framework)
         # general
         self.parser.add_argument('--n_trials', type=int, default=self.n_trials)
         self.parser.add_argument('--timeout_hpo', type=int, default=self.timeout_hpo)
         self.parser.add_argument('--timeout_trial', type=int, default=self.timeout_trial)
         self.parser.add_argument('--max_concurrent_trials', type=int, default=self.max_concurrent_trials)
+        self.parser.add_argument('--hpo_seed', type=int, default=self.hpo_seed)
         # optuna
         self.parser.add_argument('--sampler', type=str, default=self.sampler)
         self.parser.add_argument('--pruner', type=str, default=self.pruner)
@@ -140,61 +70,70 @@ class HPOExperiment(BaseExperiment, ABC):
         self.timeout_hpo = args.timeout_hpo
         self.timeout_trial = args.timeout_trial
         self.max_concurrent_trials = args.max_concurrent_trials
+        self.hpo_seed = args.hpo_seed
         # optuna
         self.sampler = args.sampler
         self.pruner = args.pruner
         self.direction = args.direction
         self.hpo_metric = args.hpo_metric
+        return args
 
     @abstractmethod
-    def get_hyperband_max_resources(self, combination: dict, unique_params: dict, extra_params: dict, **kwargs):
-        raise NotImplementedError('This method must be implemented in the subclass')
+    def _get_unique_params(self):
+        unique_params = super()._get_unique_params()
+        unique_params.update(
+            {
+                "hpo_framework": self.hpo_framework,
+                "n_trials": self.n_trials,
+                "timeout_hpo": self.timeout_hpo,
+                "timeout_trial": self.timeout_trial,
+                "max_concurrent_trials": self.max_concurrent_trials,
+                "hpo_seed": self.hpo_seed,
+                "sampler": self.sampler,
+                "pruner": self.pruner,
+                "direction": self.direction,
+                "hpo_metric": self.hpo_metric,
+            }
+        )
+        return unique_params
 
-    def _load_model(self, combination: dict, unique_params: dict, extra_params: dict, **kwargs):
+    def _load_model(
+        self, combination: dict, unique_params: dict, extra_params: dict, mlflow_run_id: Optional[str] = None, **kwargs
+    ):
         results = {}
-        model_nickname = combination['model_nickname']
-        model_cls = self.models_dict[model_nickname][0]
-        seed_model = combination['seed_model']
-        timeout_hpo = unique_params.get("timeout_hpo", self.timeout_hpo)
+        hpo_framework = unique_params["hpo_framework"]
+        n_trials = unique_params["n_trials"]
+        timeout_hpo = unique_params["timeout_hpo"]
+        timeout_trial = unique_params["timeout_trial"]
+        max_concurrent_trials = unique_params["max_concurrent_trials"]
+        hpo_seed = unique_params["hpo_seed"]
+        sampler = unique_params["sampler"]
+        pruner = unique_params["pruner"]
 
-        if self.hpo_framework == 'optuna':
-            if self.sampler == 'grid':
-                search_space, default_values = model_cls.create_search_space()
-                search_space = discretize_search_space(search_space)
-                sampler = optuna.samplers.GridSampler(search_space=search_space, seed=seed_model)
-            else:
-                sampler = self.sampler
-
-            if self.pruner == "hyperband":
-                max_resources = self.get_hyperband_max_resources(combination, unique_params, extra_params, **kwargs)
-                n_brackets = 5
-                min_resources = 1
-                # the following should give us the desired number of brackets
-                reduction_factor = floor((max_resources / min_resources) ** (1 / (n_brackets - 1)))
-                pruner = optuna.pruners.HyperbandPruner(
-                    min_resource=min_resources, max_resource=max_resources, reduction_factor=reduction_factor
-                )
-            else:
-                pruner = self.pruner
-
+        if hpo_framework == 'optuna':
             tuner_kwargs = dict(
                 sampler=sampler,
                 pruner=pruner,
-                n_trials=self.n_trials,
+                n_trials=n_trials,
                 timeout_total=timeout_hpo,
-                seed=seed_model,
+                timeout_trial=timeout_trial,
+                seed=hpo_seed,
             )
 
             if self.dask_cluster_type is not None:
+                n_threads_per_task = unique_params["n_threads_per_task"]
+                n_cores_per_task = unique_params["n_cores_per_task"]
+                n_gpus_per_worker = unique_params["n_gpus_per_worker"]
+                n_processes_per_task = unique_params["n_processes_per_task"]
                 storage = DaskStorage(client=get_client())
                 tuner_kwargs["dask_client"] = "worker_client"
                 tuner_kwargs["storage"] = storage
-                tuner_kwargs["max_concurrent_trials"] = self.max_concurrent_trials
+                tuner_kwargs["max_concurrent_trials"] = max_concurrent_trials
                 tuner_kwargs["resources_per_task"] = {
-                    "threads": self.n_threads_per_task,
-                    "cores": self.n_cores_per_task,
-                    "gpus": self.n_gpus_per_worker,
-                    "processes": self.n_processes_per_task,
+                    "threads": n_threads_per_task,
+                    "cores": n_cores_per_task,
+                    "gpus": n_gpus_per_worker,
+                    "processes": n_processes_per_task,
                 }
                 tuner_cls = DaskOptunaTuner
             else:
@@ -205,110 +144,148 @@ class HPOExperiment(BaseExperiment, ABC):
 
         return results
 
-    def _training_fn(self, trial:dict, single_experiment: BaseExperiment, unique_params: dict, 
-                     extra_params: dict, **kwargs):
-        trial_combination = trial["trial_combination"]
-        combination_values = list(trial_combination.values())
-        combination_names = list(trial_combination.keys())
-        extra_params = extra_params.copy()
-        parent_run_id = extra_params.pop('mlflow_run_id', None)
-        timeout_trial = extra_params.pop('timeout_trial', self.timeout_trial)
-        unique_params = unique_params.copy()
-        # we actually need to consider parent_run_id as a unique parameter, because it will be used
-        # exclusively for the parent_run, we cannot use a run from another parent_run for hpo
-        unique_params['parent_run_id'] = parent_run_id
-        work_dir = self.get_local_work_dir(trial_combination, trial_combination['mlflow_run_id'], unique_params)
-        if timeout_trial == 0:
-            results = single_experiment._run_combination(*combination_values, combination_names=combination_names,
-                                                         unique_params=unique_params,
-                                                         extra_params=extra_params,
-                                                         return_results=True)
-        else:
-            fn = single_experiment._run_combination
-            kwargs_fn = dict(combination_names=combination_names, unique_params=unique_params,
-                             extra_params=extra_params, return_results=True)
-            try:
-                results = func_timeout(timeout_trial, fn, args=combination_values, kwargs=kwargs_fn)
-            except FunctionTimedOut:
-                results = {'evaluate_model_return': {}}
+    # def _training_fn(self, trial:dict, single_experiment: BaseExperiment, unique_params: dict,
+    #                  extra_params: dict, **kwargs):
+    #     trial_combination = trial["trial_combination"]
+    #     combination_values = list(trial_combination.values())
+    #     combination_names = list(trial_combination.keys())
+    #     extra_params = extra_params.copy()
+    #     parent_run_id = extra_params.pop('mlflow_run_id', None)
+    #     timeout_trial = extra_params.pop('timeout_trial', self.timeout_trial)
+    #     unique_params = unique_params.copy()
+    #     # we actually need to consider parent_run_id as a unique parameter, because it will be used
+    #     # exclusively for the parent_run, we cannot use a run from another parent_run for hpo
+    #     unique_params['parent_run_id'] = parent_run_id
+    #     work_dir = self.get_local_work_dir(trial_combination, trial_combination['mlflow_run_id'], unique_params)
+    #     if timeout_trial == 0:
+    #         results = single_experiment._run_combination(*combination_values, combination_names=combination_names,
+    #                                                      unique_params=unique_params,
+    #                                                      extra_params=extra_params,
+    #                                                      return_results=True)
+    #     else:
+    #         fn = single_experiment._run_combination
+    #         kwargs_fn = dict(combination_names=combination_names, unique_params=unique_params,
+    #                          extra_params=extra_params, return_results=True)
+    #         try:
+    #             results = func_timeout(timeout_trial, fn, args=combination_values, kwargs=kwargs_fn)
+    #         except FunctionTimedOut:
+    #             results = {'evaluate_model_return': {}}
 
-        if not isinstance(results, dict):
-            results = {'evaluate_model_return': {}}
-        else:
-            if 'evaluate_model_return' not in results:
-                results['evaluate_model_return'] = {}
+    #     if not isinstance(results, dict):
+    #         results = {'evaluate_model_return': {}}
+    #     else:
+    #         if 'evaluate_model_return' not in results:
+    #             results['evaluate_model_return'] = {}
 
-        # we do not need to keep all the results (data, model...), only the evaluation results
-        keep_results = results['evaluate_model_return'].copy()
-        keep_results["trial_combination"] = trial_combination
-        keep_results["work_dir"] = work_dir
+    #     # we do not need to keep all the results (data, model...), only the evaluation results
+    #     keep_results = results['evaluate_model_return'].copy()
+    #     keep_results["trial_combination"] = trial_combination
+    #     keep_results["work_dir"] = work_dir
 
-        if parent_run_id is not None:
-            eval_result = results["evaluate_model_return"].copy()
-            eval_result.pop('elapsed_time', None)
-            mlflow.log_metrics(eval_result, run_id=parent_run_id, step=trial["trial"].number)
-        return keep_results
+    #     if parent_run_id is not None:
+    #         eval_result = results["evaluate_model_return"].copy()
+    #         eval_result.pop('elapsed_time', None)
+    #         mlflow.log_metrics(eval_result, run_id=parent_run_id, step=trial["trial"].number)
+    #     return keep_results
 
-    def _get_optuna_params(
-        self, search_space, study, model_params, fit_params, combination, child_runs_ids, random_state
-    ):
-        optuna_distributions_search_space = {}
-        conditional_distributions_search_space = {}
-        flatten_search_space = flatten_dict(search_space)
-        for name, value in flatten_search_space.items():
-            if isinstance(value, optuna.distributions.BaseDistribution):
-                optuna_distributions_search_space[name] = value
-            else:
-                conditional_distributions_search_space[name] = value
-        trial = study.ask(optuna_distributions_search_space)
-        child_run_id = child_runs_ids[trial.number] 
-        conditional_params = {name: fn(trial) for name, fn
-                              in conditional_distributions_search_space.items()}
-        trial_model_params = trial.params
-        trial_model_params.update(model_params.copy())
-        trial_seed_model = random_state.randint(0, 10000)
-        trial_combination = combination.copy()
-        trial_combination.pop('model_params')
-        trial_combination.pop('seed_model')
-        trial_combination.pop('fit_params')
-        trial_key = '_'.join([str(value) for value in trial_combination.values()])  # shared prefix
-        trial_key = trial_key + f'-{child_run_id}'  # unique key (child_run_id)
-        trial_combination['model_params'] = trial_model_params
-        trial_combination['seed_model'] = trial_seed_model
-        trial_combination['fit_params'] = fit_params.copy()
-        trial_combination['mlflow_run_id'] = child_run_id
-        return dict(trial=trial, trial_combination=trial_combination, trial_key=trial_key)
+    # def _get_optuna_params(
+    #     self, search_space, study, model_params, fit_params, combination, child_runs_ids, random_state
+    # ):
+    #     optuna_distributions_search_space = {}
+    #     conditional_distributions_search_space = {}
+    #     flatten_search_space = flatten_dict(search_space)
+    #     for name, value in flatten_search_space.items():
+    #         if isinstance(value, optuna.distributions.BaseDistribution):
+    #             optuna_distributions_search_space[name] = value
+    #         else:
+    #             conditional_distributions_search_space[name] = value
+    #     trial = study.ask(optuna_distributions_search_space)
+    #     child_run_id = child_runs_ids[trial.number]
+    #     conditional_params = {name: fn(trial) for name, fn
+    #                           in conditional_distributions_search_space.items()}
+    #     trial_model_params = trial.params
+    #     trial_model_params.update(model_params.copy())
+    #     trial_seed_model = random_state.randint(0, 10000)
+    #     trial_combination = combination.copy()
+    #     trial_combination.pop('model_params')
+    #     trial_combination.pop('seed_model')
+    #     trial_combination.pop('fit_params')
+    #     trial_key = '_'.join([str(value) for value in trial_combination.values()])  # shared prefix
+    #     trial_key = trial_key + f'-{child_run_id}'  # unique key (child_run_id)
+    #     trial_combination['model_params'] = trial_model_params
+    #     trial_combination['seed_model'] = trial_seed_model
+    #     trial_combination['fit_params'] = fit_params.copy()
+    #     trial_combination['mlflow_run_id'] = child_run_id
+    #     return dict(trial=trial, trial_combination=trial_combination, trial_key=trial_key)
 
     @abstractmethod
-    def _load_single_experiment(self, combination: dict, unique_params: dict, extra_params: dict, **kwargs):
-        raise NotImplementedError('This method must be implemented in the subclass')
+    def training_fn(
+        self,
+        trial: dict,
+        combination: dict,
+        unique_params: dict,
+        extra_params: dict,
+        mlflow_run_id: Optional[str] = None,
+        **kwargs,
+    ) -> dict:
+        raise NotImplementedError(
+            "The training_fn method must be implemented in the subclass. "
+            "It should handle the training of the model for a given trial."
+        )
 
-    def _fit_model(self, combination: dict, unique_params: dict, extra_params: dict, **kwargs):
-        model_nickname = combination['model_nickname']
-        model_params = combination['model_params']
-        fit_params = combination['fit_params']
-        seed_model = combination['seed_model']
-        mlflow_run_id = extra_params.get('mlflow_run_id', None)
-        model_cls = self.models_dict[model_nickname][0]
+    def get_trial_fn(
+        self, 
+        study: Study,
+        search_space: dict, 
+        combination: dict,
+        unique_params: dict,
+        extra_params: dict,
+        mlflow_run_id: Optional[str] = None,
+        child_runs_ids: Optional[list] = None,
+        **kwargs,
+    ) -> dict:
+        flatten_search_space = flatten_dict(search_space)
+        trial = study.ask(flatten_search_space)
+        trial_number = trial.number
+        trial_key = "_".join([str(value) for value in combination.values()])
+        trial_key = trial_key + f"-{trial_number}"  # unique key (trial number)
+        child_run_id = child_runs_ids[trial_number] if child_runs_ids else None
+        trial.set_user_attr('child_run_id', child_run_id)
+        return dict(trial=trial, trial_key=trial_key, child_run_id=child_run_id)
+
+    @abstractmethod
+    def get_search_space(
+        self, combination: dict, unique_params: dict, extra_params: dict, mlflow_run_id: Optional[str] = None, **kwargs
+    ) -> dict:
+        raise NotImplementedError(
+            "The get_search_space method must be implemented in the subclass. "
+            "It should return the search space for the hyperparameter optimization."
+        )
+
+    @abstractmethod
+    def get_default_values(
+        self, combination: dict, unique_params: dict, extra_params: dict, mlflow_run_id: Optional[str] = None, **kwargs
+    ) -> list:
+        raise NotImplementedError(
+            "The get_default_values method must be implemented in the subclass. "
+            "It should return the default values for the hyperparameters."
+        )
+
+    def _fit_model(
+        self, combination: dict, unique_params: dict, extra_params: dict, mlflow_run_id: Optional[str] = None, **kwargs
+    ):
         tuner: OptunaTuner = kwargs.get('load_model_return', {}).get('tuner', None)
-
-        if isinstance(tuner.sampler, optuna.samplers.GridSampler):
-            # we will ignore n_trials and run every trial defined in the search_space
-            search_space = tuner.sampler._search_space
-            n_samples_params = [len(value) for value in search_space.values()]
-            n_trials = np.prod(n_samples_params)
-        else:
-            n_trials = self.n_trials
+        n_trials = unique_params['n_trials']
 
         # objective and search space (distribution)
-        search_space, default_values = model_cls.create_search_space()
-        random_state = check_random_state(seed_model)
         if mlflow_run_id is not None:
             parent_run_id = mlflow_run_id
             parent_run = mlflow.get_run(parent_run_id)
             child_runs = parent_run.data.tags
             child_runs_ids = [child_run_id for key, child_run_id in child_runs.items()
-                                if key.startswith('child_run_id_')]
+                              if key.startswith('child_run_id_')]
+            # sort child runs by trial number
+            child_runs_ids.sort(key=lambda x: int(x.split('_')[-1])) 
             if len(child_runs_ids) < n_trials:  # runs were not created before, so we create them now
                 mlflow_client = mlflow.client.MlflowClient(tracking_uri=self.mlflow_tracking_uri)
                 experiment = mlflow_client.get_experiment_by_name(self.experiment_name)
@@ -326,23 +303,30 @@ class HPOExperiment(BaseExperiment, ABC):
             parent_run_id = None
             child_runs_ids = [None for _ in range(self.n_trials)]
 
-        # we will run several experiments
-        single_experiment = self._load_single_experiment(
-            combination, unique_params=unique_params, extra_params=extra_params, **kwargs
+        search_space = self.get_search_space(combination, unique_params, extra_params, mlflow_run_id, **kwargs)
+        default_values = self.get_default_values(combination, unique_params, extra_params, mlflow_run_id, **kwargs)
+        get_trial_fn = partial(
+            self.get_trial_fn,
+            search_space=search_space,
+            combination=combination,
+            unique_params=unique_params,
+            extra_params=extra_params,
+            mlflow_run_id=mlflow_run_id,
+            child_runs_ids=child_runs_ids,
         )
 
-        get_trial_fn = partial(self._get_optuna_params, model_params=model_params, fit_params=fit_params,
-                               combination=combination, child_runs_ids=child_runs_ids, random_state=random_state)
-        training_fn = partial(self._training_fn, single_experiment=single_experiment, unique_params=unique_params,
-                              extra_params=extra_params, **kwargs)
-
         study = tuner.tune(
-            training_fn=training_fn,
+            training_fn=self.training_fn,
             search_space=search_space,
             direction=self.direction,
             metric=self.hpo_metric,
-            enqueue_configurations=[default_values],
+            enqueue_configurations=default_values,
             get_trial_fn=get_trial_fn,
+            combination=combination,
+            unique_params=unique_params,
+            extra_params=extra_params,
+            mlflow_run_id=mlflow_run_id,
+            **kwargs
         )
 
         grid_search_stopped = tuner.grid_search_stopped
@@ -375,48 +359,36 @@ class HPOExperiment(BaseExperiment, ABC):
                             mlflow_client.set_terminated(child_run_id, status='FAILED')
         return dict(study=study)
 
-    def _get_metrics(self, combination: dict, unique_params: dict, extra_params: dict, **kwargs):
+    def _get_metrics(
+        self, combination: dict, unique_params: dict, extra_params: dict, mlflow_run_id: Optional[str] = None, **kwargs
+    ):
         return {}
 
-    def _evaluate_model(self, combination: dict, unique_params: dict, extra_params: dict, **kwargs):
+    def _evaluate_model(
+        self, combination: dict, unique_params: dict, extra_params: dict, mlflow_run_id: Optional[str] = None, **kwargs
+    ):
         study = kwargs['fit_model_return']['study']
 
         best_trial = study.best_trial
         best_trial_result = best_trial.user_attrs.get('result', dict())
-        best_metric_results = {f'best_{metric}': value for metric, value in best_trial_result.items()
-                               if not metric.startswith('elapsed_') and metric not in ['trial_combination', 'work_dir']}
+        best_metric_results = {f'best/{metric}': value for metric, value in best_trial_result.items()}
+        best_value = best_trial.value
+        best_metric_results['best/value'] = best_value
         # if best_metric_results is empty it means that every trial failed, we will raise an exception
         if not best_metric_results:
             raise ValueError('Every trial failed, no best model was found')
 
-        mlflow_run_id = extra_params.get('mlflow_run_id', None)
         if mlflow_run_id is not None:
-            best_trial_combination = best_trial_result.get('trial_combination', dict())
-            best_model_params = best_trial_combination.get('model_params', dict())
-            best_model_params['best_child_run_id'] = best_trial_combination.get('mlflow_run_id', None)
-            best_model_params['seed_model'] = best_trial_combination.get('seed_model', None)
-            mlflow_client = mlflow.client.MlflowClient(tracking_uri=self.mlflow_tracking_uri)
-            for tag, value in best_model_params.items():
-                mlflow_client.set_tag(mlflow_run_id, tag, value)
-
+            params_to_log = {f'best/{param}': value for param, value in best_trial.params.items()}
+            best_child_run_id = best_trial.user_attrs.get('child_run_id', None)
+            params_to_log['best/child_run_id'] = best_child_run_id
+            mlflow.log_params(params_to_log, run_id=mlflow_run_id)
         return best_metric_results
 
-    def _get_combinations(self):
-        combinations, combination_names, unique_params, extra_params = super()._get_combinations()
-        unique_params.update(dict(hpo_framework=self.hpo_framework, n_trials=self.n_trials,
-                                  timeout_hpo=self.timeout_hpo, timeout_trial=self.timeout_trial,
-                                  max_concurrent_trials=self.max_concurrent_trials, sampler=self.sampler,
-                                  pruner=self.pruner, create_validation_set=self.create_validation_set,
-                                  direction=self.direction, hpo_metric=self.hpo_metric))
-        if not self.create_validation_set:
-            warn('HPOExperiment usually requires a validation set, are you sure you did not forgot set'
-                 ' create_validation_set=True or pass --create_validation_set')
-        return combinations, combination_names, unique_params, extra_params
-
-    def _create_mlflow_run(self, *combination, combination_names: list[str],
-                           unique_params: dict, extra_params: dict):
-        parent_run_id = super()._create_mlflow_run(*combination, combination_names=combination_names,
-                                                   unique_params=unique_params, extra_params=extra_params)
+    def _create_mlflow_run(self, *combination, combination_names: list[str], unique_params: dict, extra_params: dict):
+        parent_run_id = super()._create_mlflow_run(
+            *combination, combination_names=combination_names, unique_params=unique_params, extra_params=extra_params
+        )
         mlflow_client = mlflow.client.MlflowClient(tracking_uri=self.mlflow_tracking_uri)
         experiment = mlflow_client.get_experiment_by_name(self.experiment_name)
         if experiment is None:
