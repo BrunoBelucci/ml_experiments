@@ -78,7 +78,6 @@ class HPOExperiment(BaseExperiment, ABC):
         self.hpo_metric = args.hpo_metric
         return args
 
-    @abstractmethod
     def _get_unique_params(self):
         unique_params = super()._get_unique_params()
         unique_params.update(
@@ -221,7 +220,7 @@ class HPOExperiment(BaseExperiment, ABC):
     @abstractmethod
     def training_fn(
         self,
-        trial: dict,
+        trial_dict: dict,
         combination: dict,
         unique_params: dict,
         extra_params: dict,
@@ -282,10 +281,11 @@ class HPOExperiment(BaseExperiment, ABC):
             parent_run_id = mlflow_run_id
             parent_run = mlflow.get_run(parent_run_id)
             child_runs = parent_run.data.tags
-            child_runs_ids = [child_run_id for key, child_run_id in child_runs.items()
-                              if key.startswith('child_run_id_')]
+            child_runs = {key: value for key, value in child_runs.items() if key.startswith('child_run_id_')}
+            child_runs_ids = list(child_runs.values())
+            child_runs_numbers = [int(key.split('_')[-1]) for key in child_runs.keys()]
             # sort child runs by trial number
-            child_runs_ids.sort(key=lambda x: int(x.split('_')[-1])) 
+            child_runs_ids = [id for _, id in sorted(zip(child_runs_numbers, child_runs_ids))]
             if len(child_runs_ids) < n_trials:  # runs were not created before, so we create them now
                 mlflow_client = mlflow.client.MlflowClient(tracking_uri=self.mlflow_tracking_uri)
                 experiment = mlflow_client.get_experiment_by_name(self.experiment_name)
@@ -313,6 +313,7 @@ class HPOExperiment(BaseExperiment, ABC):
             extra_params=extra_params,
             mlflow_run_id=mlflow_run_id,
             child_runs_ids=child_runs_ids,
+            **kwargs,
         )
 
         study = tuner.tune(
