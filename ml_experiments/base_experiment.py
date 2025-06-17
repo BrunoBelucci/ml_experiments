@@ -435,7 +435,7 @@ class BaseExperiment(ABC):
         return client
 
     def _on_train_start(
-        self, combination: dict, extra_params: dict, mlflow_run_id: Optional[str] = None, **kwargs
+        self, combination: dict, unique_params: dict, extra_params: dict, mlflow_run_id: Optional[str] = None, **kwargs
     ):
         if self.n_gpus_per_task > 0:
             if torch_available:
@@ -448,107 +448,108 @@ class BaseExperiment(ABC):
         return {}
 
     def _before_load_data(
-        self, combination: dict, extra_params: dict, mlflow_run_id: Optional[str] = None, **kwargs
+        self, combination: dict, unique_params: dict, extra_params: dict, mlflow_run_id: Optional[str] = None, **kwargs
     ):
         return {}
 
     @abstractmethod
     def _load_data(
-        self, combination: dict, extra_params: dict, mlflow_run_id: Optional[str] = None, **kwargs
+        self, combination: dict, unique_params: dict, extra_params: dict, mlflow_run_id: Optional[str] = None, **kwargs
     ):
         return {}
 
     def _after_load_data(
-        self, combination: dict, extra_params: dict, mlflow_run_id: Optional[str] = None, **kwargs
+        self, combination: dict, unique_params: dict, extra_params: dict, mlflow_run_id: Optional[str] = None, **kwargs
     ):
         return {}
 
     def _before_load_model(
-        self, combination: dict, extra_params: dict, mlflow_run_id: Optional[str] = None, **kwargs
+        self, combination: dict, unique_params: dict, extra_params: dict, mlflow_run_id: Optional[str] = None, **kwargs
     ):
         return {}
 
     @abstractmethod
     def _load_model(
-        self, combination: dict, extra_params: dict, mlflow_run_id: Optional[str] = None, **kwargs
+        self, combination: dict, unique_params: dict, extra_params: dict, mlflow_run_id: Optional[str] = None, **kwargs
     ):
         return {}
 
     def _after_load_model(
-        self, combination: dict, extra_params: dict, mlflow_run_id: Optional[str] = None, **kwargs
+        self, combination: dict, unique_params: dict, extra_params: dict, mlflow_run_id: Optional[str] = None, **kwargs
     ):
         return {}
 
     def _before_get_metrics(
-        self, combination: dict, extra_params: dict, mlflow_run_id: Optional[str] = None, **kwargs
+        self, combination: dict, unique_params: dict, extra_params: dict, mlflow_run_id: Optional[str] = None, **kwargs
     ):
         return {}
 
     @abstractmethod
     def _get_metrics(
-        self, combination: dict, extra_params: dict, mlflow_run_id: Optional[str] = None, **kwargs
+        self, combination: dict, unique_params: dict, extra_params: dict, mlflow_run_id: Optional[str] = None, **kwargs
     ):
         return {}
 
     def _after_get_metrics(
-        self, combination: dict, extra_params: dict, mlflow_run_id: Optional[str] = None, **kwargs
+        self, combination: dict, unique_params: dict, extra_params: dict, mlflow_run_id: Optional[str] = None, **kwargs
     ):
         return {}
 
     def _before_fit_model(
-        self, combination: dict, extra_params: dict, mlflow_run_id: Optional[str] = None, **kwargs
+        self, combination: dict, unique_params: dict, extra_params: dict, mlflow_run_id: Optional[str] = None, **kwargs
     ):
         return {}
 
     @abstractmethod
     def _fit_model(
-        self, combination: dict, extra_params: dict, mlflow_run_id: Optional[str] = None, **kwargs
+        self, combination: dict, unique_params: dict, extra_params: dict, mlflow_run_id: Optional[str] = None, **kwargs
     ):
         return {}
 
     def _after_fit_model(
-        self, combination: dict, extra_params: dict, mlflow_run_id: Optional[str] = None, **kwargs
+        self, combination: dict, unique_params: dict, extra_params: dict, mlflow_run_id: Optional[str] = None, **kwargs
     ):
         return {}
 
     def _before_evaluate_model(
-        self, combination: dict, extra_params: dict, mlflow_run_id: Optional[str] = None, **kwargs
+        self, combination: dict, unique_params: dict, extra_params: dict, mlflow_run_id: Optional[str] = None, **kwargs
     ):
         return {}
 
     @abstractmethod
     def _evaluate_model(
-        self, combination: dict, extra_params: dict, mlflow_run_id: Optional[str] = None, **kwargs
+        self, combination: dict, unique_params: dict, extra_params: dict, mlflow_run_id: Optional[str] = None, **kwargs
     ):
         return {}
 
     def _after_evaluate_model(
-        self, combination: dict, extra_params: dict, mlflow_run_id: Optional[str] = None, **kwargs
+        self, combination: dict, unique_params: dict, extra_params: dict, mlflow_run_id: Optional[str] = None, **kwargs
     ):
         return {}
 
     def _on_exception(
-        self, combination: dict, extra_params: dict, mlflow_run_id: Optional[str] = None, **kwargs
+        self, combination: dict, unique_params: dict, extra_params: dict, mlflow_run_id: Optional[str] = None, **kwargs
     ):
-        return self._on_exception_or_train_end(combination, extra_params=extra_params, mlflow_run_id=mlflow_run_id, **kwargs)
+        return self._on_exception_or_train_end(combination, unique_params, extra_params=extra_params, mlflow_run_id=mlflow_run_id, **kwargs)
 
     def _on_train_end(
-        self, combination: dict, extra_params: dict, mlflow_run_id: Optional[str] = None, **kwargs
+        self, combination: dict, unique_params: dict, extra_params: dict, mlflow_run_id: Optional[str] = None, **kwargs
     ):
-        return self._on_exception_or_train_end(combination, extra_params=extra_params, mlflow_run_id=mlflow_run_id, **kwargs)
+        return self._on_exception_or_train_end(combination, unique_params, extra_params=extra_params, mlflow_run_id=mlflow_run_id, **kwargs)
 
     def _on_exception_or_train_end(
-        self, combination: dict, extra_params: dict, mlflow_run_id=None, **kwargs
+        self, combination: dict, unique_params: dict, extra_params: dict, mlflow_run_id=None, **kwargs
     ):
         self._log_run_results(
             combination=combination,
+            unique_params=unique_params,
             extra_params=extra_params,
             mlflow_run_id=mlflow_run_id,
             **kwargs,
         )
 
         # save and/or clean work_dir
-        work_dir = self.get_local_work_dir(combination, mlflow_run_id)
+        work_dir = self.get_local_work_dir(combination, mlflow_run_id, unique_params)
         if self.save_root_dir:
             # copy work_dir to save_dir
             if mlflow_run_id is not None:
@@ -562,7 +563,7 @@ class BaseExperiment(ABC):
         return {}
 
     def _log_base_experiment_run_results(
-        self, combination: dict, extra_params: dict, mlflow_run_id=None, **kwargs
+        self, combination: dict, unique_params: dict, extra_params: dict, mlflow_run_id=None, **kwargs
     ):
         if mlflow_run_id is None:
             return
@@ -622,16 +623,17 @@ class BaseExperiment(ABC):
             mlflow_client.set_tag(mlflow_run_id, tag, value)
 
     def _log_run_results(
-        self, combination: dict, extra_params: dict, mlflow_run_id=None, **kwargs
+        self, combination: dict, unique_params: dict, extra_params: dict, mlflow_run_id=None, **kwargs
     ):
         self._log_base_experiment_run_results(
             combination=combination,
+            unique_params=unique_params,
             extra_params=extra_params,
             mlflow_run_id=mlflow_run_id,
             **kwargs,
         )
 
-    def get_local_work_dir(self, combination: dict, mlflow_run_id=None):
+    def get_local_work_dir(self, combination: dict, mlflow_run_id=None, unique_params: Optional[dict] = None):
         try:
             # if running on a dask worker, we use the worker's local directory as work_root_dir
             worker = get_worker()
@@ -643,7 +645,10 @@ class BaseExperiment(ABC):
         if mlflow_run_id is not None:
             unique_name = mlflow_run_id
         else:
-            unique_name = "_".join([f"{key}_{value}" for key, value in combination.items()])
+            run_unique_params = combination.copy()
+            if unique_params is not None:
+                run_unique_params.update(unique_params)
+            unique_name = "_".join([f"{key}_{value}" for key, value in run_unique_params.items()])
 
         work_dir = work_dir / unique_name
         os.makedirs(work_dir, exist_ok=True)
@@ -666,6 +671,7 @@ class BaseExperiment(ABC):
         self,
         exception,
         combination: dict,
+        unique_params: dict,
         extra_params: dict,
         results: dict,
         start_time: float,
@@ -682,6 +688,7 @@ class BaseExperiment(ABC):
             self._on_exception,
             exception=exception_to_log,
             combination=combination,
+            unique_params=unique_params,
             extra_params=extra_params,
             **kwargs,
             **results,
@@ -693,6 +700,7 @@ class BaseExperiment(ABC):
             exception=exception_to_log,
             total_elapsed_time=total_elapsed_time,
             **combination,
+            **unique_params,
         )
         if self.raise_on_error:
             raise exception
@@ -707,6 +715,7 @@ class BaseExperiment(ABC):
     def _train_model(
         self,
         combination: dict,
+        unique_params: dict,
         extra_params: dict,
         return_results: bool = False,
         mlflow_run_id: Optional[str] = None,
@@ -717,11 +726,12 @@ class BaseExperiment(ABC):
         try:
 
             timeout_fit = self.timeout_fit
-            log_and_print_msg("Running...", verbose=self.verbose, verbose_level=1, **combination)
+            log_and_print_msg("Running...", verbose=self.verbose, verbose_level=1, **combination, **unique_params)
 
             results["on_train_start_return"] = self._add_elapsed_time(
                 self._on_train_start,
                 combination=combination,
+                unique_params=unique_params,
                 extra_params=extra_params,
                 mlflow_run_id=mlflow_run_id,
                 **kwargs,
@@ -732,6 +742,7 @@ class BaseExperiment(ABC):
             results["before_load_data_return"] = self._add_elapsed_time(
                 self._before_load_data,
                 combination=combination,
+                unique_params=unique_params,
                 extra_params=extra_params,
                 mlflow_run_id=mlflow_run_id,
                 **kwargs,
@@ -741,6 +752,7 @@ class BaseExperiment(ABC):
             results["load_data_return"] = self._add_elapsed_time(
                 self._load_data,
                 combination=combination,
+                unique_params=unique_params,
                 extra_params=extra_params,
                 mlflow_run_id=mlflow_run_id,
                 **kwargs,
@@ -749,6 +761,7 @@ class BaseExperiment(ABC):
             results["after_load_data_return"] = self._add_elapsed_time(
                 self._after_load_data,
                 combination=combination,
+                unique_params=unique_params,
                 extra_params=extra_params,
                 mlflow_run_id=mlflow_run_id,
                 **kwargs,
@@ -759,6 +772,7 @@ class BaseExperiment(ABC):
             results["before_load_model_return"] = self._add_elapsed_time(
                 self._before_load_model,
                 combination=combination,
+                unique_params=unique_params,
                 extra_params=extra_params,
                 mlflow_run_id=mlflow_run_id,
                 **kwargs,
@@ -767,6 +781,7 @@ class BaseExperiment(ABC):
             results["load_model_return"] = self._add_elapsed_time(
                 self._load_model,
                 combination=combination,
+                unique_params=unique_params,
                 extra_params=extra_params,
                 mlflow_run_id=mlflow_run_id,
                 **kwargs,
@@ -775,6 +790,7 @@ class BaseExperiment(ABC):
             results["after_load_model_return"] = self._add_elapsed_time(
                 self._after_load_model,
                 combination=combination,
+                unique_params=unique_params,
                 extra_params=extra_params,
                 mlflow_run_id=mlflow_run_id,
                 **kwargs,
@@ -785,6 +801,7 @@ class BaseExperiment(ABC):
             results["before_get_metrics_return"] = self._add_elapsed_time(
                 self._before_get_metrics,
                 combination=combination,
+                unique_params=unique_params,
                 extra_params=extra_params,
                 mlflow_run_id=mlflow_run_id,
                 **kwargs,
@@ -793,6 +810,7 @@ class BaseExperiment(ABC):
             results["get_metrics_return"] = self._add_elapsed_time(
                 self._get_metrics,
                 combination=combination,
+                unique_params=unique_params,
                 extra_params=extra_params,
                 mlflow_run_id=mlflow_run_id,
                 **kwargs,
@@ -801,6 +819,7 @@ class BaseExperiment(ABC):
             results["after_get_metrics_return"] = self._add_elapsed_time(
                 self._after_get_metrics,
                 combination=combination,
+                unique_params=unique_params,
                 extra_params=extra_params,
                 mlflow_run_id=mlflow_run_id,
                 **kwargs,
@@ -811,6 +830,7 @@ class BaseExperiment(ABC):
             results["before_fit_model_return"] = self._add_elapsed_time(
                 self._before_fit_model,
                 combination=combination,
+                unique_params=unique_params,
                 extra_params=extra_params,
                 mlflow_run_id=mlflow_run_id,
                 **kwargs,
@@ -821,6 +841,7 @@ class BaseExperiment(ABC):
                 kwargs_fit_model = dict(
                     fn=self._fit_model,
                     combination=combination,
+                    unique_params=unique_params,
                     extra_params=extra_params,
                     mlflow_run_id=mlflow_run_id,
                 )
@@ -831,6 +852,7 @@ class BaseExperiment(ABC):
                 results["fit_model_return"] = self._add_elapsed_time(
                     self._fit_model,
                     combination=combination,
+                    unique_params=unique_params,
                     extra_params=extra_params,
                     mlflow_run_id=mlflow_run_id,
                     **kwargs,
@@ -839,6 +861,7 @@ class BaseExperiment(ABC):
             results["after_fit_model_return"] = self._add_elapsed_time(
                 self._after_fit_model,
                 combination=combination,
+                unique_params=unique_params,
                 extra_params=extra_params,
                 mlflow_run_id=mlflow_run_id,
                 **kwargs,
@@ -849,6 +872,7 @@ class BaseExperiment(ABC):
             results["before_evaluate_model_return"] = self._add_elapsed_time(
                 self._before_evaluate_model,
                 combination=combination,
+                unique_params=unique_params,
                 extra_params=extra_params,
                 mlflow_run_id=mlflow_run_id,
                 **kwargs,
@@ -857,6 +881,7 @@ class BaseExperiment(ABC):
             results["evaluate_model_return"] = self._add_elapsed_time(
                 self._evaluate_model,
                 combination=combination,
+                unique_params=unique_params,
                 extra_params=extra_params,
                 mlflow_run_id=mlflow_run_id,
                 **kwargs,
@@ -865,6 +890,7 @@ class BaseExperiment(ABC):
             results["after_evaluate_model_return"] = self._add_elapsed_time(
                 self._after_evaluate_model,
                 combination=combination,
+                unique_params=unique_params,
                 extra_params=extra_params,
                 mlflow_run_id=mlflow_run_id,
                 **kwargs,
@@ -875,6 +901,7 @@ class BaseExperiment(ABC):
             return self._treat_train_model_exception(
                 exception,
                 combination=combination,
+                unique_params=unique_params,
                 extra_params=extra_params,
                 mlflow_run_id=mlflow_run_id,
                 results=results,
@@ -886,6 +913,7 @@ class BaseExperiment(ABC):
             return self._treat_train_model_exception(
                 exception,
                 combination=combination,
+                unique_params=unique_params,
                 extra_params=extra_params,
                 mlflow_run_id=mlflow_run_id,
                 results=results,
@@ -899,6 +927,7 @@ class BaseExperiment(ABC):
             results["on_train_end_return"] = self._add_elapsed_time(
                 self._on_train_end,
                 combination=combination,
+                unique_params=unique_params,
                 extra_params=extra_params,
                 mlflow_run_id=mlflow_run_id,
                 **kwargs,
@@ -910,6 +939,7 @@ class BaseExperiment(ABC):
                 verbose_level=1,
                 total_elapsed_time=total_elapsed_time,
                 **combination,
+                **unique_params,
             )
             if return_results:
                 return results
@@ -977,6 +1007,7 @@ class BaseExperiment(ABC):
     def _run_mlflow_and_train_model(
         self,
         combination: dict,
+        unique_params: dict,
         extra_params: dict,
         return_results=False,
         mlflow_run_id=None,
@@ -984,6 +1015,8 @@ class BaseExperiment(ABC):
     ):
 
         run_unique_params = combination.copy()
+        if unique_params is not None:
+            run_unique_params.update(unique_params)
         possible_existent_run = set_mlflow_tracking_uri_check_if_exists(
             self.experiment_name, self.mlflow_tracking_uri, self.check_if_exists, **run_unique_params
         )
@@ -1014,6 +1047,7 @@ class BaseExperiment(ABC):
 
         return self._train_model(
             combination=combination,
+            unique_params=unique_params,
             return_results=return_results,
             extra_params=extra_params,
             mlflow_run_id=mlflow_run_id,
@@ -1024,6 +1058,7 @@ class BaseExperiment(ABC):
         self,
         *combination,
         combination_names: list[str],
+        unique_params: dict,
         extra_params: dict,
         return_results=False,
         **kwargs,
@@ -1042,6 +1077,7 @@ class BaseExperiment(ABC):
 
         kwargs_fn = dict(
             combination=combination_dict,
+            unique_params=unique_params,
             extra_params=extra_params,
             mlflow_run_id=mlflow_run_id,
             return_results=return_results,
@@ -1105,6 +1141,14 @@ class BaseExperiment(ABC):
         return combinations, combination_names
 
     @abstractmethod
+    def _get_unique_params(self):
+        """Get the unique parameters of the experiment. They are considered to be unique but they are the same for
+        every combination. They will be used for example to check if we have already run this experiment (if
+        check_if_exists is enabled). They are tipically the evaluation strategy, dataset configuration, etc."""
+        unique_params = dict()
+        return unique_params
+
+    @abstractmethod
     def _get_extra_params(self):
         """Get the extra parameters of the experiment. They are not considered to be unique to the experiment, so they
         will not be used to check if we have already run this experiment (if check_if_exists is enabled). They are
@@ -1112,10 +1156,11 @@ class BaseExperiment(ABC):
         extra_params = dict()
         return extra_params
 
-    def _create_mlflow_run(self, *combination, combination_names: list[str], extra_params: dict):
+    def _create_mlflow_run(self, *combination, combination_names: list[str], unique_params: dict, extra_params: dict):
         """Create a mlflow run."""
         combination_dict = dict(zip(combination_names, combination))
         run_unique_params = combination_dict.copy()
+        run_unique_params.update(unique_params)
         possible_existent_run = set_mlflow_tracking_uri_check_if_exists(
             self.experiment_name, self.mlflow_tracking_uri, self.check_if_exists, **run_unique_params
         )
@@ -1141,6 +1186,7 @@ class BaseExperiment(ABC):
     def _run_experiment(self, client=None):
         """Run the experiment."""
         combinations, combination_names = self._get_combinations()
+        unique_params = self._get_unique_params()
         extra_params = self._get_extra_params()
         log_and_print_msg(
             "Starting experiment...",
@@ -1148,6 +1194,7 @@ class BaseExperiment(ABC):
             verbose_level=1,
             combination_names=combination_names,
             combinations=combinations,
+            unique_params=unique_params,
             extra_params=extra_params,
         )
         n_args = len(combinations[0])
@@ -1168,6 +1215,7 @@ class BaseExperiment(ABC):
                     resources=resources_per_task,
                     pure=False,
                     combination_names=combination_names,
+                    unique_params=unique_params,
                     extra_params=extra_params,
                 )
                 # The following line will block the execution until the first future is completed, ensuring that we
@@ -1183,6 +1231,7 @@ class BaseExperiment(ABC):
                         batch_size=self.n_workers,
                         resources=resources_per_task,
                         combination_names=combination_names,
+                        unique_params=unique_params,
                         extra_params=extra_params,
                     )
                     other_mlflow_run_ids = client.gather(other_futures)
@@ -1240,6 +1289,7 @@ class BaseExperiment(ABC):
                             workers=[worker_name],
                             allow_other_workers=True,
                             combination_names=combination_names,
+                            unique_params=unique_params,
                             extra_params=extra_params,
                         )
                         future.worker = worker_name
@@ -1292,6 +1342,7 @@ class BaseExperiment(ABC):
                     run_id = self._create_mlflow_run(
                         *combination,
                         combination_names=combination_names,
+                        unique_params=unique_params,
                         extra_params=extra_params,
                     )
                     combination = list(combination) + [run_id]
@@ -1299,6 +1350,7 @@ class BaseExperiment(ABC):
                 combination_success = self._run_combination(
                     *combination,
                     combination_names=combination_names,
+                    unique_params=unique_params,
                     extra_params=extra_params,
                 )
                 if combination_success is True:
