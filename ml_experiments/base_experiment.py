@@ -59,6 +59,7 @@ def log_and_print_msg(first_line, verbose, verbose_level, **kwargs):
 
 
 class BaseExperiment(ABC):
+
     def __init__(
         self,
         # parameters of experiment
@@ -73,6 +74,8 @@ class BaseExperiment(ABC):
         timeout_fit: Optional[int] = None,
         timeout_combination: Optional[int] = None,
         verbose: int = 1,
+        profile_time: bool = True,
+        profile_memory: bool = False,
         # mlflow specific
         log_to_mlflow: bool = True,
         mlflow_tracking_uri: str = "sqlite:///" + str(Path.cwd().resolve()) + "/ml_experiments.db",
@@ -226,6 +229,18 @@ class BaseExperiment(ABC):
         self.parser.add_argument("--mlflow_tracking_uri", type=str, default=self.mlflow_tracking_uri)
         self.parser.add_argument("--do_not_check_if_exists", action="store_true")
         self.parser.add_argument("--raise_on_error", action="store_true")
+        self.parser.add_argument(
+            "--profile_time",
+            action="store_true",
+            help="If True, profile the time taken by each step of training. It usually does not impact"
+            " the training time.",
+        )
+        self.parser.add_argument(
+            "--profile_memory",
+            action="store_true",
+            help="If True, profile the memory usage of the model during each step of training. "
+            "Warning: this may slow down the training process significantly. ",
+        )
 
         self.parser.add_argument("--dask_cluster_type", type=str, default=self.dask_cluster_type)
         self.parser.add_argument(
@@ -1275,7 +1290,7 @@ class BaseExperiment(ABC):
                 )
 
         return total_combinations, n_combinations_successfully_completed, n_combinations_failed, n_combinations_none
-    
+
     def run(self):
         """Run without argpasrse."""
         os.makedirs(self.work_root_dir, exist_ok=True)
