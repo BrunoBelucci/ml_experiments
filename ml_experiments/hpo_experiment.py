@@ -7,7 +7,7 @@ import mlflow
 from mlflow.utils.mlflow_tags import MLFLOW_PARENT_RUN_ID
 from ml_experiments.base_experiment import BaseExperiment
 from ml_experiments.tuners import OptunaTuner, DaskOptunaTuner
-from ml_experiments.utils import flatten_dict
+from ml_experiments.utils import flatten_dict, profile_time, profile_memory
 from functools import partial
 
 
@@ -270,6 +270,8 @@ class HPOExperiment(BaseExperiment, ABC):
             "It should return the default values for the hyperparameters."
         )
 
+    @profile_time(enable_based_on_attribute="profile_time")
+    @profile_memory(enable_based_on_attribute="profile_memory")
     def _fit_model(
         self, combination: dict, unique_params: dict, extra_params: dict, mlflow_run_id: Optional[str] = None, **kwargs
     ):
