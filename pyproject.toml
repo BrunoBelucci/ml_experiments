@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "ml_experiments"
-version = "0.1"
+version = "1.0"
 description = """ml_experiments"""
 readme = "README.md"
 license = "MIT"
@@ -46,7 +46,8 @@ dependencies = [
     "optuna",
     "openml",
     "optuna-integration",
-    "func-timeout"
+    "func-timeout",
+    "memory-profiler",
 ]
 
 [project.urls]
