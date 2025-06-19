@@ -288,19 +288,6 @@ class HPOExperiment(BaseExperiment, ABC):
             child_runs_numbers = [int(key.split('_')[-1]) for key in child_runs.keys()]
             # sort child runs by trial number
             child_runs_ids = [id for _, id in sorted(zip(child_runs_numbers, child_runs_ids))]
-            if len(child_runs_ids) < n_trials:  # runs were not created before, so we create them now
-                mlflow_client = mlflow.client.MlflowClient(tracking_uri=self.mlflow_tracking_uri)
-                experiment = mlflow_client.get_experiment_by_name(self.experiment_name)
-                if experiment is None:
-                    raise ValueError(f'Experiment {self.experiment_name} not found in mlflow')
-                experiment_id = experiment.experiment_id
-                for trial in range(len(child_runs_ids) + 1, n_trials + 1):
-                    run = mlflow_client.create_run(experiment_id, tags={MLFLOW_PARENT_RUN_ID: parent_run_id})
-                    run_id = run.info.run_id
-                    mlflow_client.set_tag(parent_run_id, f'child_run_id_{trial}', run_id)
-                    mlflow_client.set_tag(run_id, 'parent_run_id', parent_run_id)
-                    mlflow_client.update_run(run_id, status='SCHEDULED')
-                    child_runs_ids.append(run_id)
         else:
             parent_run_id = None
             child_runs_ids = [None for _ in range(self.n_trials)]
