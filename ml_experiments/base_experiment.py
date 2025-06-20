@@ -670,17 +670,16 @@ class BaseExperiment(ABC):
         )
 
         # save and/or clean work_dir
-        work_dir = self.get_local_work_dir(combination, mlflow_run_id, unique_params)
-        if self.save_root_dir:
-            # copy work_dir to save_dir
-            if mlflow_run_id is not None:
-                mlflow.log_artifacts(str(work_dir.resolve()), artifact_path="work_dir", run_id=mlflow_run_id)
-            else:
-                save_dir = self.save_root_dir / work_dir.name
-                copytree(work_dir, save_dir, dirs_exist_ok=True)
+        work_dir = kwargs["work_dir"]
+        save_dir = kwargs["save_dir"]
         if self.clean_work_dir:
             if work_dir.exists():
                 rmtree(work_dir)
+        # also clean work_dir and save_dir if they are empty
+        if work_dir.exists() and not any(work_dir.iterdir()):
+            work_dir.rmdir()
+        if save_dir and save_dir.exists() and not any(save_dir.iterdir()):
+            save_dir.rmdir()
         return {}
 
     def _log_base_experiment_run_results(
@@ -712,6 +711,8 @@ class BaseExperiment(ABC):
         # log evaluation results
         eval_results_dict = kwargs.get("evaluate_model_return", {}).copy()
         eval_results_dict.pop("elapsed_time", None)
+        # Remove any items from eval_results_dict that are not int or float
+        eval_results_dict = {key: value for key, value in eval_results_dict.items() if isinstance(value, (int, float))}
         log_metrics.update(eval_results_dict)
 
         # log total max memory usage in MB (in linux getrusage seems to returns in KB)
@@ -838,6 +839,13 @@ class BaseExperiment(ABC):
         results = {}
         start_time = time.perf_counter()
         try:
+
+            work_dir = self.get_local_work_dir(combination, mlflow_run_id, unique_params)
+            save_dir = self.save_root_dir / work_dir.name if self.save_root_dir else None
+            os.makedirs(work_dir, exist_ok=True)
+            os.makedirs(save_dir, exist_ok=True) if save_dir else None
+            results["work_dir"] = work_dir
+            results["save_dir"] = save_dir
 
             timeout_fit = unique_params["timeout_fit"]
             log_and_print_msg("Running...", verbose=self.verbose, verbose_level=1, **combination, **unique_params)
@@ -1106,12 +1114,15 @@ class BaseExperiment(ABC):
                 **unique_params,
             )
             if return_results:
+                results["mlflow_run_id"] = mlflow_run_id
                 results["Finished"] = True
                 return results
             else:
                 return True
 
-    def _log_base_experiment_start_params(self, mlflow_run_id, **run_unique_params):
+    def _log_base_experiment_start_params(
+        self, combination: dict, unique_params: dict, extra_params: dict, mlflow_run_id: Optional[str] = None, **kwargs
+    ):
         if torch_available:
             if torch.cuda.is_available():
                 cuda_available = True
@@ -1119,15 +1130,31 @@ class BaseExperiment(ABC):
                 cuda_available = False
         else:
             cuda_available = False
+
+        run_unique_params = combination.copy()
+        if unique_params is not None:
+            run_unique_params.update(unique_params)
+
+        log_path = None
+        for handler in logging.getLogger().handlers:
+            if hasattr(handler, "baseFilename"):
+                log_path = handler.baseFilename
+                break
+
+        work_dir = self.get_local_work_dir(combination=combination, mlflow_run_id=mlflow_run_id, unique_params=unique_params)
+        save_dir = self.save_root_dir / work_dir.name if self.save_root_dir else None
+
         params_to_log = flatten_dict(run_unique_params).copy()
         params_to_log.update(
             dict(
                 git_hash=get_git_revision_hash(),
                 cuda_available=cuda_available,
-                log_dir=str(self.log_dir.resolve()),
-                work_root_dir=str(self.work_root_dir.resolve()),
+                log_path=log_path,
+                work_dir=work_dir,
             )
         )
+        if save_dir is not None:
+            params_to_log["save_dir"] = str(save_dir.resolve())
         if self.log_file_name is not None:
             params_to_log["log_file_name"] = self.log_file_name
         if self.save_root_dir is not None:
@@ -1146,9 +1173,17 @@ class BaseExperiment(ABC):
         for tag, value in tags_to_log.items():
             mlflow_client.set_tag(mlflow_run_id, tag, value)
 
-    def _log_run_start_params(self, mlflow_run_id, **run_unique_params):
+    def _log_run_start_params(
+        self, combination: dict, unique_params: dict, extra_params: dict, mlflow_run_id: Optional[str] = None, **kwargs
+    ):
         """Log the parameters of the run to mlflow."""
-        self._log_base_experiment_start_params(mlflow_run_id, **run_unique_params)
+        self._log_base_experiment_start_params(
+            combination=combination,
+            unique_params=unique_params,
+            extra_params=extra_params,
+            mlflow_run_id=mlflow_run_id,
+            **kwargs,
+        )
 
     def _run_mlflow_and_train_model(
         self,
@@ -1189,7 +1224,14 @@ class BaseExperiment(ABC):
             mlflow_run_id = run.info.run_id
 
         mlflow_client.update_run(mlflow_run_id, status="RUNNING")
-        self._log_run_start_params(mlflow_run_id, **run_unique_params)
+        self._log_run_start_params(
+            combination=combination,
+            unique_params=unique_params,
+            return_results=return_results,
+            extra_params=extra_params,
+            mlflow_run_id=mlflow_run_id,
+            **kwargs,
+        )
 
         return self._train_model(
             combination=combination,
