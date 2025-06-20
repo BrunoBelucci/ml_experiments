@@ -389,6 +389,5 @@ class HPOExperiment(BaseExperiment, ABC):
             run = mlflow_client.create_run(experiment_id, tags={MLFLOW_PARENT_RUN_ID: parent_run_id})
             run_id = run.info.run_id
             mlflow_client.set_tag(parent_run_id, f'child_run_id_{trial}', run_id)
-            mlflow_client.set_tag(run_id, 'parent_run_id', parent_run_id)
             mlflow_client.update_run(run_id, status='SCHEDULED')
         return parent_run_id
