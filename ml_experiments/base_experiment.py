@@ -15,12 +15,17 @@ import dask
 from dask.distributed import LocalCluster, get_worker, as_completed
 from dask_jobqueue import SLURMCluster
 from tqdm.auto import tqdm
-from resource import getrusage, RUSAGE_SELF
 from abc import ABC, abstractmethod
 from ml_experiments.utils import flatten_dict, get_git_revision_hash, set_mlflow_tracking_uri_check_if_exists
 from func_timeout import func_timeout, FunctionTimedOut
 from itertools import product
 import hashlib
+
+try:
+    from resource import getrusage, RUSAGE_SELF
+    resource_available = True
+except ImportError:
+    resource_available = False
 
 try:
     import torch
@@ -710,7 +715,8 @@ class BaseExperiment(ABC):
         log_metrics.update(eval_results_dict)
 
         # log total max memory usage in MB (in linux getrusage seems to returns in KB)
-        log_metrics['max_memory_used'] = getrusage(RUSAGE_SELF).ru_maxrss / 1000
+        if resource_available:
+            log_metrics['max_memory_used'] = getrusage(RUSAGE_SELF).ru_maxrss / 1000
 
         if torch_available:
             if torch.cuda.is_available():
@@ -961,7 +967,8 @@ class BaseExperiment(ABC):
             if ret:
                 results["before_fit_model_return"] = ret
 
-            results["max_memory_used_before_fit"] = getrusage(RUSAGE_SELF).ru_maxrss / 1000
+            if resource_available:
+                results["max_memory_used_before_fit"] = getrusage(RUSAGE_SELF).ru_maxrss / 1000
             if torch_available:
                 if torch.cuda.is_available():
                     results["max_cuda_memory_reserved_before_fit"] = torch.cuda.max_memory_reserved() / (
@@ -1007,7 +1014,8 @@ class BaseExperiment(ABC):
             if ret:
                 results["after_fit_model_return"] = ret
 
-            results["max_memory_used_after_fit"] = getrusage(RUSAGE_SELF).ru_maxrss / 1000
+            if resource_available:
+                results["max_memory_used_after_fit"] = getrusage(RUSAGE_SELF).ru_maxrss / 1000
             if torch_available:
                 if torch.cuda.is_available():
                     results["max_cuda_memory_reserved_after_fit"] = torch.cuda.max_memory_reserved() / (
