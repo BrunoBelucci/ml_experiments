@@ -4,7 +4,7 @@ import shlex
 import time
 from multiprocessing import cpu_count
 from pathlib import Path
-from shutil import rmtree, copytree
+from shutil import rmtree
 from typing import Iterable, Optional
 import mlflow
 import os
@@ -20,6 +20,8 @@ from ml_experiments.utils import flatten_dict, get_git_revision_hash, set_mlflow
 from func_timeout import func_timeout, FunctionTimedOut
 from itertools import product
 import hashlib
+from datetime import datetime
+
 
 try:
     from resource import getrusage, RUSAGE_SELF
@@ -29,7 +31,6 @@ except ImportError:
 
 try:
     import torch
-
     torch_available = True
 except ImportError:
     torch = None
@@ -56,13 +57,16 @@ class LoggingSetterPlugin(WorkerPlugin):
 
 def log_and_print_msg(first_line, verbose, verbose_level, **kwargs):
     if verbose >= verbose_level:
+        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        first_line = f"{current_time}\n{first_line}"
         slurm_job_id = os.getenv("SLURM_JOB_ID", None)
         if slurm_job_id is not None:
             first_line = f"SLURM_JOB_ID: {slurm_job_id}\n{first_line}"
         first_line = f"{first_line}\n"
         first_line += "".join([f"{key}: {value}\n" for key, value in kwargs.items()])
         print(first_line)
-        logging.info(first_line)
+        if logging.getLogger().hasHandlers():
+            logging.info(first_line)
 
 
 class BaseExperiment(ABC):
@@ -71,7 +75,7 @@ class BaseExperiment(ABC):
         self,
         # parameters of experiment
         experiment_name: str = "base_experiment",
-        log_dir: str | Path = Path.cwd() / "logs",
+        log_dir: str | Path | None = None,
         log_file_name: Optional[str] = None,
         work_root_dir: str | Path = Path.cwd() / "work",
         save_root_dir: Optional[str | Path] = None,
@@ -84,8 +88,7 @@ class BaseExperiment(ABC):
         profile_time: bool = True,
         profile_memory: bool = False,
         # mlflow specific
-        log_to_mlflow: bool = True,
-        mlflow_tracking_uri: str = "sqlite:///" + str(Path.cwd().resolve()) + "/ml_experiments.db",
+        mlflow_tracking_uri: str | None = None,
         check_if_exists: bool = True,
         # parallelization
         dask_cluster_type: Optional[str] = None,
@@ -130,8 +133,6 @@ class BaseExperiment(ABC):
             If True, raise an error if it is encountered when fitting the model. Defaults to False.
         parser :
             The parser to be used in the experiment. Defaults to None, which means that the parser will be created.
-        log_to_mlflow :
-            If True, log the results to mlflow. Defaults to True.
         mlflow_tracking_uri :
             The uri of the mlflow server. Defaults to 'sqlite:///' + str(Path.cwd().resolve()) + '/ml_experiments.db'.
         check_if_exists :
@@ -192,7 +193,6 @@ class BaseExperiment(ABC):
             save_root_dir = Path(save_root_dir)
         self.save_root_dir = save_root_dir
         self.clean_work_dir = clean_work_dir
-        self.log_to_mlflow = log_to_mlflow
         self.mlflow_tracking_uri = mlflow_tracking_uri
         self.check_if_exists = check_if_exists
         self.parser = parser
@@ -232,7 +232,6 @@ class BaseExperiment(ABC):
         self.parser.add_argument("--work_root_dir", type=Path, default=self.work_root_dir)
         self.parser.add_argument("--save_root_dir", type=Path, default=self.save_root_dir)
         self.parser.add_argument("--do_not_clean_work_dir", action="store_true")
-        self.parser.add_argument("--do_not_log_to_mlflow", action="store_true")
         self.parser.add_argument("--mlflow_tracking_uri", type=str, default=self.mlflow_tracking_uri)
         self.parser.add_argument("--do_not_check_if_exists", action="store_true")
         self.parser.add_argument("--raise_on_error", action="store_true")
@@ -283,7 +282,6 @@ class BaseExperiment(ABC):
         self.work_root_dir = args.work_root_dir
         self.save_root_dir = args.save_root_dir
         self.clean_work_dir = not args.do_not_clean_work_dir
-        self.log_to_mlflow = not args.do_not_log_to_mlflow
         self.mlflow_tracking_uri = args.mlflow_tracking_uri
         self.check_if_exists = not args.do_not_check_if_exists
         self.raise_on_error = args.raise_on_error
@@ -424,6 +422,8 @@ class BaseExperiment(ABC):
         """Setup the logger."""
         if log_dir is None:
             log_dir = self.log_dir
+        if log_dir is None:
+            raise ValueError("Something went wrong, we are supposed to have a log_dir defined, check the code.")
         os.makedirs(log_dir, exist_ok=True)
         if self.log_file_name is None:
             name = self.experiment_name
@@ -675,6 +675,8 @@ class BaseExperiment(ABC):
         if self.clean_work_dir:
             if work_dir.exists():
                 rmtree(work_dir)
+            if self.work_root_dir.exists() and not any(self.work_root_dir.iterdir()):
+                self.work_root_dir.rmdir()
         # also clean work_dir and save_dir if they are empty
         if work_dir.exists() and not any(work_dir.iterdir()):
             work_dir.rmdir()
@@ -1271,7 +1273,7 @@ class BaseExperiment(ABC):
             return_results=return_results,
         )
         kwargs_fn.update(kwargs)
-        if self.log_to_mlflow:
+        if self.mlflow_tracking_uri is not None:
             fn = self._run_mlflow_and_train_model
         else:
             fn = self._train_model
@@ -1340,7 +1342,7 @@ class BaseExperiment(ABC):
             first_args = list(combinations[0])
             list_of_args = [[combination[i] for combination in combinations[1:]] for i in range(n_args)]
             # we will first create the mlflow runs to avoid threading problems
-            if self.log_to_mlflow:
+            if self.mlflow_tracking_uri is not None:
                 resources_per_task = {"_whole_worker": 1}  # ensure 1 worker creates 1 run
                 first_future = client.submit(
                     self._create_mlflow_run,
@@ -1477,7 +1479,7 @@ class BaseExperiment(ABC):
         else:
             progress_bar = tqdm(combinations, desc="Combinations completed")
             for combination in progress_bar:
-                if self.log_to_mlflow:
+                if self.mlflow_tracking_uri is not None:
                     run_id = self._create_mlflow_run(
                         *combination,
                         combination_names=combination_names,
@@ -1521,10 +1523,15 @@ class BaseExperiment(ABC):
 
     def run(self, return_results=False):
         """Run without argpasrse."""
-        os.makedirs(self.work_root_dir, exist_ok=True)
+
+        if self.work_root_dir is not None:
+            os.makedirs(self.work_root_dir, exist_ok=True)
+
         if self.save_root_dir:
             os.makedirs(self.save_root_dir, exist_ok=True)
-        self._setup_logger()
+        
+        if self.log_dir is not None:
+            self._setup_logger()
 
         if self.dask_cluster_type is not None:
             client = self._setup_dask(self.n_workers, self.dask_cluster_type, self.dask_address)
