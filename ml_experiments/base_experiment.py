@@ -13,7 +13,6 @@ import warnings
 from distributed import WorkerPlugin, Worker, Client
 import dask
 from dask.distributed import LocalCluster, get_worker, as_completed
-from dask_jobqueue import SLURMCluster
 from tqdm.auto import tqdm
 from abc import ABC, abstractmethod
 from ml_experiments.utils import flatten_dict, get_git_revision_hash, set_mlflow_tracking_uri_check_if_exists
@@ -525,6 +524,7 @@ class BaseExperiment(ABC):
                 # some slurm clusters are configured to use cores=cores and others cores=threads, which makes it really
                 # difficult to know how to spawn a new job and what do we want, we will have to manually adjust
                 # resource_per_worker and resource_per_task to correctly use this implementation in each slurm cluster
+                from dask_jobqueue import SLURMCluster  # avoid problem when importing outside the main thread
                 cluster = SLURMCluster(
                     cores=self.n_cores_per_worker,
                     memory=self.dask_memory,
