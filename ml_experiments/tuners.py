@@ -2,7 +2,7 @@ from abc import ABC
 import numpy as np
 from math import floor
 from typing import Literal, Optional
-from warnings import warn
+from warnings import warn, filterwarnings
 import optuna
 from optuna.samplers import BaseSampler
 from optuna.pruners import BasePruner
@@ -14,6 +14,11 @@ from ml_experiments.utils import flatten_dict
 from dask.distributed import Client
 from distributed import get_client, worker_client
 from func_timeout import func_timeout, FunctionTimedOut
+
+
+filterwarnings("ignore", message=".*Argument ``multivariate`` is an experimental feature.*")
+filterwarnings("ignore", message=".*Argument ``constant_liar`` is an experimental feature.*")
+optuna.logging.set_verbosity(optuna.logging.WARNING)
 
 
 def discretize_search_space(search_space):
@@ -179,7 +184,7 @@ class OptunaTuner(ABC):
         )
 
     def tune(self, training_fn, search_space, direction="minimize", metric=None, enqueue_configurations=None, 
-             get_trial_fn=None, hyperband_max_resources=None, **kwargs):
+             get_trial_fn=None, hyperband_max_resources=None, leave_pbar=True, **kwargs):
         sampler = self.get_sampler(search_space=search_space)
         pruner = self.get_pruner(hyperband_max_resources=hyperband_max_resources)
         storage = self.get_storage()
@@ -195,7 +200,7 @@ class OptunaTuner(ABC):
         grid_search_stopped = False
         timed_out = False
         start_time = perf_counter()
-        pbar = tqdm(total=self.n_trials, desc='Trials')
+        pbar = tqdm(total=self.n_trials, desc="Trials", leave=leave_pbar)
         while n_trial < self.n_trials:
             # This will ensure that we do not run more trials than the number specified by n_trials
             # and that we first run the enqueued configurations if any

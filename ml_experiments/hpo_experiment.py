@@ -143,80 +143,6 @@ class HPOExperiment(BaseExperiment, ABC):
 
         return results
 
-    # def _training_fn(self, trial:dict, single_experiment: BaseExperiment, unique_params: dict,
-    #                  extra_params: dict, **kwargs):
-    #     trial_combination = trial["trial_combination"]
-    #     combination_values = list(trial_combination.values())
-    #     combination_names = list(trial_combination.keys())
-    #     extra_params = extra_params.copy()
-    #     parent_run_id = extra_params.pop('mlflow_run_id', None)
-    #     timeout_trial = extra_params.pop('timeout_trial', self.timeout_trial)
-    #     unique_params = unique_params.copy()
-    #     # we actually need to consider parent_run_id as a unique parameter, because it will be used
-    #     # exclusively for the parent_run, we cannot use a run from another parent_run for hpo
-    #     unique_params['parent_run_id'] = parent_run_id
-    #     work_dir = self.get_local_work_dir(trial_combination, trial_combination['mlflow_run_id'], unique_params)
-    #     if timeout_trial == 0:
-    #         results = single_experiment._run_combination(*combination_values, combination_names=combination_names,
-    #                                                      unique_params=unique_params,
-    #                                                      extra_params=extra_params,
-    #                                                      return_results=True)
-    #     else:
-    #         fn = single_experiment._run_combination
-    #         kwargs_fn = dict(combination_names=combination_names, unique_params=unique_params,
-    #                          extra_params=extra_params, return_results=True)
-    #         try:
-    #             results = func_timeout(timeout_trial, fn, args=combination_values, kwargs=kwargs_fn)
-    #         except FunctionTimedOut:
-    #             results = {'evaluate_model_return': {}}
-
-    #     if not isinstance(results, dict):
-    #         results = {'evaluate_model_return': {}}
-    #     else:
-    #         if 'evaluate_model_return' not in results:
-    #             results['evaluate_model_return'] = {}
-
-    #     # we do not need to keep all the results (data, model...), only the evaluation results
-    #     keep_results = results['evaluate_model_return'].copy()
-    #     keep_results["trial_combination"] = trial_combination
-    #     keep_results["work_dir"] = work_dir
-
-    #     if parent_run_id is not None:
-    #         eval_result = results["evaluate_model_return"].copy()
-    #         eval_result.pop('elapsed_time', None)
-    #         mlflow.log_metrics(eval_result, run_id=parent_run_id, step=trial["trial"].number)
-    #     return keep_results
-
-    # def _get_optuna_params(
-    #     self, search_space, study, model_params, fit_params, combination, child_runs_ids, random_state
-    # ):
-    #     optuna_distributions_search_space = {}
-    #     conditional_distributions_search_space = {}
-    #     flatten_search_space = flatten_dict(search_space)
-    #     for name, value in flatten_search_space.items():
-    #         if isinstance(value, optuna.distributions.BaseDistribution):
-    #             optuna_distributions_search_space[name] = value
-    #         else:
-    #             conditional_distributions_search_space[name] = value
-    #     trial = study.ask(optuna_distributions_search_space)
-    #     child_run_id = child_runs_ids[trial.number]
-    #     conditional_params = {name: fn(trial) for name, fn
-    #                           in conditional_distributions_search_space.items()}
-    #     trial_model_params = trial.params
-    #     trial_model_params.update(model_params.copy())
-    #     trial_seed_model = random_state.randint(0, 10000)
-    #     trial_combination = combination.copy()
-    #     trial_combination.pop('model_params')
-    #     trial_combination.pop('seed_model')
-    #     trial_combination.pop('fit_params')
-    #     trial_key = '_'.join([str(value) for value in trial_combination.values()])  # shared prefix
-    #     trial_key = trial_key + f'-{child_run_id}'  # unique key (child_run_id)
-    #     trial_combination['model_params'] = trial_model_params
-    #     trial_combination['seed_model'] = trial_seed_model
-    #     trial_combination['fit_params'] = fit_params.copy()
-    #     trial_combination['mlflow_run_id'] = child_run_id
-    #     return dict(trial=trial, trial_combination=trial_combination, trial_key=trial_key)
-
     @abstractmethod
     def training_fn(
         self,
@@ -316,6 +242,7 @@ class HPOExperiment(BaseExperiment, ABC):
             unique_params=unique_params,
             extra_params=extra_params,
             mlflow_run_id=mlflow_run_id,
+            leave_pbar=False,
             **kwargs
         )
 
