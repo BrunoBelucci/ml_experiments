@@ -172,7 +172,7 @@ def profile_memory(return_in_dict=True, enable=True, enable_based_on_attribute=N
                 dynamic_enable = True
             if not dynamic_enable:
                 return func(*args, **kwargs_from_func)
-            
+
             if retval:
                 mem_usage, result = memory_usage((func, args, kwargs_from_func), max_usage=max_usage, retval=retval, **kwargs)
             else:
@@ -191,3 +191,11 @@ def profile_memory(return_in_dict=True, enable=True, enable_based_on_attribute=N
                     return mem_usage
         return wrapper
     return decorator
+
+
+def print_keys(d, prefix=""):
+    if isinstance(d, dict):
+        for k, v in d.items():
+            print(f"{prefix}{k}")
+            if isinstance(v, dict):
+                print_keys(v, prefix=prefix + "  ")
