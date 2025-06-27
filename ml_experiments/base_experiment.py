@@ -827,7 +827,6 @@ class BaseExperiment(ABC):
                 results["unique_params"] = unique_params
                 results["extra_params"] = extra_params
                 results["mlflow_run_id"] = mlflow_run_id
-                results["Finished"] = True
                 return results
             except UnboundLocalError:
                 return {}
