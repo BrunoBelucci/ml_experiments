@@ -1160,6 +1160,7 @@ class BaseExperiment(ABC):
                 cuda_available=cuda_available,
                 log_path=log_path,
                 work_dir=work_dir,
+                experiment_class_name=self.__class__.__name__,
             )
         )
         if save_dir is not None:
