@@ -803,6 +803,7 @@ class BaseExperiment(ABC):
             combination=combination,
             unique_params=unique_params,
             extra_params=extra_params,
+            mlflow_run_id=mlflow_run_id,
             **kwargs,
             **results,
         )

@@ -284,6 +284,7 @@ class HPOExperiment(BaseExperiment, ABC):
     def _evaluate_model(
         self, combination: dict, unique_params: dict, extra_params: dict, mlflow_run_id: Optional[str] = None, **kwargs
     ):
+        hpo_metric = unique_params['hpo_metric']
         study = kwargs['fit_model_return']['study']
 
         best_trial = study.best_trial
@@ -292,8 +293,8 @@ class HPOExperiment(BaseExperiment, ABC):
         best_value = best_trial.value
         best_metric_results['best/value'] = best_value
         # if best_metric_results is empty it means that every trial failed, we will raise an exception
-        if not best_metric_results:
-            raise ValueError('Every trial failed, no best model was found')
+        if f"best/{hpo_metric}" not in best_metric_results:
+            raise ValueError(f'Best metric {hpo_metric} not found in the best trial results, it may be that every trial failed.')
 
         if mlflow_run_id is not None:
             params_to_log = {f'best/{param}': value for param, value in best_trial.params.items()}
