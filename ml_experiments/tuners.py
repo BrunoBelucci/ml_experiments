@@ -10,7 +10,7 @@ from optuna.storages import BaseStorage, InMemoryStorage
 from optuna_integration import DaskStorage
 from time import perf_counter
 from tqdm.auto import tqdm
-from ml_experiments.utils import flatten_dict
+from ml_experiments.utils import flatten_any
 from dask.distributed import Client
 from distributed import get_client, worker_client
 from func_timeout import func_timeout, FunctionTimedOut
@@ -151,7 +151,7 @@ class OptunaTuner(ABC):
 
     def get_trial(self, study, search_space, get_trial_fn=None):
         if get_trial_fn is None:
-            flatten_search_space = flatten_dict(search_space)
+            flatten_search_space = flatten_any(search_space)
             trial = study.ask(flatten_search_space)
         else:
             trial = get_trial_fn(study=study, search_space=search_space)
@@ -192,7 +192,7 @@ class OptunaTuner(ABC):
         if enqueue_configurations is not None and not isinstance(sampler, optuna.samplers.GridSampler):
             enqueued_configs = len(enqueue_configurations)
             for config in enqueue_configurations:
-                flatten_config = flatten_dict(config)
+                flatten_config = flatten_any(config)
                 self.study.enqueue_trial(flatten_config)
         else:
             enqueued_configs = 0

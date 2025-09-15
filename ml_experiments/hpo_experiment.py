@@ -7,7 +7,7 @@ import mlflow
 from mlflow.utils.mlflow_tags import MLFLOW_PARENT_RUN_ID
 from ml_experiments.base_experiment import BaseExperiment
 from ml_experiments.tuners import OptunaTuner, DaskOptunaTuner
-from ml_experiments.utils import flatten_dict, profile_time, profile_memory
+from ml_experiments.utils import flatten_any, profile_time, profile_memory
 from functools import partial
 
 
@@ -169,7 +169,7 @@ class HPOExperiment(BaseExperiment, ABC):
         child_runs_ids: Optional[list] = None,
         **kwargs,
     ) -> dict:
-        flatten_search_space = flatten_dict(search_space)
+        flatten_search_space = flatten_any(search_space)
         trial = study.ask(flatten_search_space)
         trial_number = trial.number
         trial_key = "_".join([str(value) for value in combination.values()])

@@ -15,7 +15,7 @@ import dask
 from dask.distributed import LocalCluster, get_worker, as_completed
 from tqdm.auto import tqdm
 from abc import ABC, abstractmethod
-from ml_experiments.utils import flatten_dict, get_git_revision_hash, set_mlflow_tracking_uri_check_if_exists
+from ml_experiments.utils import flatten_any, get_git_revision_hash, set_mlflow_tracking_uri_check_if_exists
 from func_timeout import func_timeout, FunctionTimedOut
 from itertools import product
 import hashlib
@@ -739,7 +739,7 @@ class BaseExperiment(ABC):
         if "model" in kwargs.get("load_model_return", {}):
             model = kwargs["load_model_return"]["model"]
             model_params = model.get_params()
-            model_params = flatten_dict(model_params)
+            model_params = flatten_any(model_params)
             # Sanitize callables
             for param in model_params.keys():
                 if callable(model_params[param]):
@@ -1154,7 +1154,7 @@ class BaseExperiment(ABC):
         work_dir = self.get_local_work_dir(combination=combination, mlflow_run_id=mlflow_run_id, unique_params=unique_params)
         save_dir = self.save_root_dir / work_dir.name if self.save_root_dir else None
 
-        params_to_log = flatten_dict(run_unique_params).copy()
+        params_to_log = flatten_any(run_unique_params).copy()
         params_to_log.update(
             dict(
                 git_hash=get_git_revision_hash(),
