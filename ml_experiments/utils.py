@@ -5,26 +5,37 @@ from memory_profiler import memory_usage
 from functools import wraps
 
 
-def flatten_any(obj, parent_key='', sep='/', list_prefix='item_'):
-    if isinstance(obj, list):
-        obj = {f'{list_prefix}{i}': v for i, v in enumerate(obj)}
-    return flatten_dict(obj, parent_key, sep)
+def flatten_any(obj, parent_key="", sep="/", list_prefix="item_"):
+    items = []
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            new_key = parent_key + sep + k if parent_key else k
+            items.extend(flatten_any(v, new_key, sep, list_prefix).items())
+    elif isinstance(obj, list):
+        for i, v in enumerate(obj):
+            new_key = parent_key + sep + f"{list_prefix}{i}" if parent_key else f"{list_prefix}{i}"
+            items.extend(flatten_any(v, new_key, sep, list_prefix).items())
+    else:
+        items.append((parent_key, obj))
+    return dict(items)
 
 
-def unflatten_any(obj, sep='/', list_prefix='item_'):
-    """
-    Inverse of flatten_any: reconstructs dicts and lists from a flattened dict.
-    """
+def unflatten_any(obj, sep="/", list_prefix="item_"):
     unflat = unflatten_dict(obj, sep=sep)
-    # Check if this is a dict representing a list (all keys are item_{i})
-    if (
-        isinstance(unflat, dict) and
-        all(k.startswith(list_prefix) and k[len(list_prefix):].isdigit() for k in unflat)
-    ):
-        # Convert back to list, sorted by index
-        items = sorted(unflat.items(), key=lambda x: int(x[0][len(list_prefix):]))
-        return [v for _, v in items]
-    return unflat
+    return unflatten_list(unflat, list_prefix=list_prefix)
+
+
+def unflatten_list(d, list_prefix="item_"):
+    if isinstance(d, dict):
+        # Check if all keys are list_prefix + digits
+        if all(isinstance(k, str) and k.startswith(list_prefix) and k[len(list_prefix) :].isdigit() for k in d):
+            # Convert to list
+            items = sorted(d.items(), key=lambda x: int(x[0][len(list_prefix) :]))
+            return [unflatten_list(v, list_prefix=list_prefix) for _, v in items]
+        else:
+            return {k: unflatten_list(v, list_prefix=list_prefix) for k, v in d.items()}
+    else:
+        return d
 
 
 def flatten_dict(dct, parent_key='', sep='/'):
