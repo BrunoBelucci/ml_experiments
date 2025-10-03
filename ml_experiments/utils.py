@@ -193,6 +193,8 @@ def profile_memory(return_in_dict=True, enable=True, enable_based_on_attribute=N
             return func
         max_usage = kwargs.pop('max_usage', True)
         retval = kwargs.pop('retval', True)
+        
+        @wraps(func)
         def wrapper(*args, **kwargs_from_func):
 
             if enable_based_on_attribute is not None:

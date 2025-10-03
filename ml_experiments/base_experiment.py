@@ -5,7 +5,7 @@ import time
 from multiprocessing import cpu_count
 from pathlib import Path
 from shutil import rmtree
-from typing import Iterable, Optional
+from typing import Iterable, Optional, Callable
 import mlflow
 import os
 import logging
@@ -72,6 +72,7 @@ class BaseExperiment(ABC):
 
     def __init__(
         self,
+        mlflow_run_id: Optional[str | list[str]] = None,
         # parameters of experiment
         experiment_name: str = "base_experiment",
         log_dir: str | Path | None = None,
@@ -114,6 +115,8 @@ class BaseExperiment(ABC):
 
         Parameters
         ----------
+        mlflow_run_id :
+            The id of the mlflow run. If None, a new run or runs will be created. Defaults to None.
         experiment_name :
             The name of the experiment. Defaults to 'base_experiment'.
         create_validation_set :
@@ -179,6 +182,8 @@ class BaseExperiment(ABC):
         self.dask_address = dask_address
         self.n_gpus_per_worker = n_gpus_per_worker
         self._n_gpus_per_task = n_gpus_per_task
+
+        self.mlflow_run_id = mlflow_run_id
 
         self.experiment_name = experiment_name
         if isinstance(log_dir, str):
@@ -262,6 +267,7 @@ class BaseExperiment(ABC):
         self.parser.add_argument("--dask_address", type=str, default=self.dask_address)
         self.parser.add_argument("--n_gpus_per_worker", type=float, default=self.n_gpus_per_worker)
         self.parser.add_argument("--n_gpus_per_task", type=float, default=self.n_gpus_per_task)
+        self.parser.add_argument("--mlflow_run_id", type=str, nargs='*', default=self.mlflow_run_id)
 
     @abstractmethod
     def _unpack_parser(self):
@@ -314,6 +320,7 @@ class BaseExperiment(ABC):
         self.dask_address = args.dask_address
         self.n_gpus_per_worker = args.n_gpus_per_worker
         self._n_gpus_per_task = args.n_gpus_per_task
+        self.mlflow_run_id = args.mlflow_run_id
         return args
 
     def _treat_parser(self):
@@ -334,6 +341,8 @@ class BaseExperiment(ABC):
         combination_names = ["model", "dataset", "seed"]
         """
         combination_names = []
+        if self.mlflow_run_id is not None:
+            combination_names.append("mlflow_run_id")
         return combination_names
 
     def _get_combinations(self) -> tuple[list[Iterable] | list[tuple], list]:
@@ -834,6 +843,34 @@ class BaseExperiment(ABC):
         else:
             return False
 
+    def _run_step(
+        self, 
+        step_fn: Callable,
+        results_dict: dict,
+        combination: dict, 
+        unique_params: dict, 
+        extra_params: dict, 
+        mlflow_run_id: Optional[str] = None, 
+        **kwargs
+    ):
+        ret = step_fn(
+            combination=combination,
+            unique_params=unique_params,
+            extra_params=extra_params,
+            mlflow_run_id=mlflow_run_id,
+            **kwargs,
+            **results_dict,
+        )
+        if ret:
+            results_dict[step_fn.__name__[1:] + "_return"] = ret
+
+        log_and_print_msg(f"Finished {step_fn.__name__}", verbose=self.verbose, verbose_level=3)
+        if mlflow_run_id is not None:
+            mlflow_client = mlflow.client.MlflowClient(tracking_uri=self.mlflow_tracking_uri)
+            mlflow_client.set_tag(mlflow_run_id, "Last step finished", step_fn.__name__)
+
+        return results_dict
+
     def _train_model(
         self,
         combination: dict,
@@ -857,130 +894,119 @@ class BaseExperiment(ABC):
             timeout_fit = unique_params["timeout_fit"]
             log_and_print_msg("Running...", verbose=self.verbose, verbose_level=2, **combination, **unique_params)
 
-            ret = self._on_train_start(
+            results = self._run_step(
+                step_fn=self._on_train_start,
+                results_dict=results,
                 combination=combination,
                 unique_params=unique_params,
                 extra_params=extra_params,
                 mlflow_run_id=mlflow_run_id,
-                **kwargs,
-                **results,
+                **kwargs
             )
-            if ret:
-                results["on_train_start_return"] = ret
 
             # load data
-            ret = self._before_load_data(
+            results = self._run_step(
+                step_fn=self._before_load_data,
+                results_dict=results,
                 combination=combination,
                 unique_params=unique_params,
                 extra_params=extra_params,
                 mlflow_run_id=mlflow_run_id,
-                **kwargs,
-                **results,
+                **kwargs
             )
-            if ret:
-                results["before_load_data_return"] = ret
 
-            ret = self._load_data(
+            results = self._run_step(
+                step_fn=self._load_data,
+                results_dict=results,
                 combination=combination,
                 unique_params=unique_params,
                 extra_params=extra_params,
                 mlflow_run_id=mlflow_run_id,
-                **kwargs,
-                **results,
+                **kwargs
             )
-            if ret:
-                results["load_data_return"] = ret
 
-            ret = self._after_load_data(
+            results = self._run_step(
+                step_fn=self._after_load_data,
+                results_dict=results,
                 combination=combination,
                 unique_params=unique_params,
                 extra_params=extra_params,
                 mlflow_run_id=mlflow_run_id,
-                **kwargs,
-                **results,
+                **kwargs
             )
-            if ret:
-                results["after_load_data_return"] = ret
 
             # load model
-            ret = self._before_load_model(
+            results = self._run_step(
+                step_fn=self._before_load_model,
+                results_dict=results,
                 combination=combination,
                 unique_params=unique_params,
                 extra_params=extra_params,
                 mlflow_run_id=mlflow_run_id,
-                **kwargs,
-                **results,
+                **kwargs
             )
-            if ret:
-                results["before_load_model_return"] = ret
 
-            ret = self._load_model(
+            results = self._run_step(
+                step_fn=self._load_model,
+                results_dict=results,
                 combination=combination,
                 unique_params=unique_params,
                 extra_params=extra_params,
                 mlflow_run_id=mlflow_run_id,
-                **kwargs,
-                **results,
+                **kwargs
             )
-            if ret:
-                results["load_model_return"] = ret
 
-            ret = self._after_load_model(
+            results = self._run_step(
+                step_fn=self._after_load_model,
+                results_dict=results,
                 combination=combination,
                 unique_params=unique_params,
                 extra_params=extra_params,
                 mlflow_run_id=mlflow_run_id,
-                **kwargs,
-                **results,
+                **kwargs
             )
-            if ret:
-                results["after_load_model_return"] = ret
 
             # get metrics
-            ret = self._before_get_metrics(
+            results = self._run_step(
+                step_fn=self._before_get_metrics,
+                results_dict=results,
                 combination=combination,
                 unique_params=unique_params,
                 extra_params=extra_params,
                 mlflow_run_id=mlflow_run_id,
-                **kwargs,
-                **results,
+                **kwargs
             )
-            if ret:
-                results["before_get_metrics_return"] = ret
 
-            ret = self._get_metrics(
+            results = self._run_step(
+                step_fn=self._get_metrics,
+                results_dict=results,
                 combination=combination,
                 unique_params=unique_params,
                 extra_params=extra_params,
                 mlflow_run_id=mlflow_run_id,
-                **kwargs,
-                **results,
+                **kwargs
             )
-            if ret:
-                results["get_metrics_return"] = ret
 
-            ret = self._after_get_metrics(
+            results = self._run_step(
+                step_fn=self._after_get_metrics,
+                results_dict=results,
                 combination=combination,
                 unique_params=unique_params,
                 extra_params=extra_params,
                 mlflow_run_id=mlflow_run_id,
                 **kwargs,
-                **results,
             )
-            if ret:
-                results["after_get_metrics_return"] = ret
 
             # fit model
-            ret = self._before_fit_model(
+            results = self._run_step(
+                step_fn=self._before_fit_model,
+                results_dict=results,
                 combination=combination,
                 unique_params=unique_params,
                 extra_params=extra_params,
                 mlflow_run_id=mlflow_run_id,
-                **kwargs,
-                **results,
+                **kwargs
             )
-            if ret:
-                results["before_fit_model_return"] = ret
 
             if resource_available:
                 results["max_memory_used_before_fit"] = getrusage(RUSAGE_SELF).ru_maxrss / 1000
@@ -995,39 +1021,35 @@ class BaseExperiment(ABC):
 
             if timeout_fit is not None:
                 kwargs_fit_model = dict(
-                    fn=self._fit_model,
+                    step_fn=self._fit_model,
+                    results_dict=results,
                     combination=combination,
                     unique_params=unique_params,
                     extra_params=extra_params,
                     mlflow_run_id=mlflow_run_id,
                 )
                 kwargs_fit_model.update(kwargs)
-                kwargs_fit_model.update(results)
-                ret = func_timeout(timeout_fit, self._fit_model, kwargs=kwargs_fit_model)
-                if ret:
-                    results["fit_model_return"] = ret
+                results = func_timeout(timeout_fit, self._run_step, kwargs=kwargs_fit_model)
             else:
-                ret = self._fit_model(
+                results = self._run_step(
+                    step_fn=self._fit_model,
+                    results_dict=results,
                     combination=combination,
                     unique_params=unique_params,
                     extra_params=extra_params,
                     mlflow_run_id=mlflow_run_id,
-                    **kwargs,
-                    **results,
+                    **kwargs
                 )
-                if ret:
-                    results["fit_model_return"] = ret
 
-            ret = self._after_fit_model(
+            results = self._run_step(
+                step_fn=self._after_fit_model,
+                results_dict=results,
                 combination=combination,
                 unique_params=unique_params,
                 extra_params=extra_params,
                 mlflow_run_id=mlflow_run_id,
-                **kwargs,
-                **results,
+                **kwargs
             )
-            if ret:
-                results["after_fit_model_return"] = ret
 
             if resource_available:
                 results["max_memory_used_after_fit"] = getrusage(RUSAGE_SELF).ru_maxrss / 1000
@@ -1041,38 +1063,36 @@ class BaseExperiment(ABC):
                     )  # in MB
 
             # evaluate model
-            ret = self._before_evaluate_model(
+            results = self._run_step(
+                step_fn=self._before_evaluate_model,
+                results_dict=results,
                 combination=combination,
                 unique_params=unique_params,
                 extra_params=extra_params,
                 mlflow_run_id=mlflow_run_id,
-                **kwargs,
-                **results,
+                **kwargs
             )
-            if ret:
-                results["before_evaluate_model_return"] = ret
 
-            ret = self._evaluate_model(
+            results = self._run_step(
+                step_fn=self._evaluate_model,
+                results_dict=results,
                 combination=combination,
                 unique_params=unique_params,
                 extra_params=extra_params,
                 mlflow_run_id=mlflow_run_id,
-                **kwargs,
-                **results,
+                **kwargs
             )
-            if ret:
-                results["evaluate_model_return"] = ret
 
-            ret = self._after_evaluate_model(
+            results = self._run_step(
+                step_fn=self._after_evaluate_model,
+                results_dict=results,
                 combination=combination,
                 unique_params=unique_params,
                 extra_params=extra_params,
                 mlflow_run_id=mlflow_run_id,
-                **kwargs,
-                **results,
+                **kwargs
             )
-            if ret:
-                results["after_evaluate_model_return"] = ret
+
         except FunctionTimedOut as exception:
             # we need to catch FunctionTimedOut separately because it is not a subclass of Exception
             return self._treat_train_model_exception(
@@ -1102,16 +1122,16 @@ class BaseExperiment(ABC):
             total_elapsed_time = time.perf_counter() - start_time
             results["total_elapsed_time"] = total_elapsed_time
 
-            ret = self._on_train_end(
+            results = self._run_step(
+                step_fn=self._on_train_end,
+                results_dict=results,
                 combination=combination,
                 unique_params=unique_params,
                 extra_params=extra_params,
                 mlflow_run_id=mlflow_run_id,
-                **kwargs,
-                **results,
+                **kwargs
             )
-            if ret:
-                results["on_train_end_return"] = ret
+
             log_and_print_msg(
                 "Finished!",
                 verbose=self.verbose,
@@ -1120,6 +1140,7 @@ class BaseExperiment(ABC):
                 **combination,
                 **unique_params,
             )
+            
             if return_results:
                 results["combination"] = combination
                 results["unique_params"] = unique_params
@@ -1330,6 +1351,7 @@ class BaseExperiment(ABC):
         """Run the experiment."""
         results = []
         combinations, combination_names = self._get_combinations()
+        mlflow_run_id_in_combination_names = "mlflow_run_id" in combination_names
         unique_params = self._get_unique_params()
         extra_params = self._get_extra_params()
         log_and_print_msg(
@@ -1352,7 +1374,7 @@ class BaseExperiment(ABC):
             first_args = list(combinations[0])
             list_of_args = [[combination[i] for combination in combinations[1:]] for i in range(n_args)]
             # we will first create the mlflow runs to avoid threading problems
-            if self.mlflow_tracking_uri is not None:
+            if self.mlflow_tracking_uri is not None and not mlflow_run_id_in_combination_names:
                 resources_per_task = {"_whole_worker": 1}  # ensure 1 worker creates 1 run
                 first_future = client.submit(
                     self._create_mlflow_run,
@@ -1491,7 +1513,7 @@ class BaseExperiment(ABC):
         else:
             progress_bar = tqdm(combinations, desc="Combinations completed", disable=disable_progress_bar)
             for combination in progress_bar:
-                if self.mlflow_tracking_uri is not None:
+                if self.mlflow_tracking_uri is not None and not mlflow_run_id_in_combination_names:
                     run_id = self._create_mlflow_run(
                         *combination,
                         combination_names=combination_names,
