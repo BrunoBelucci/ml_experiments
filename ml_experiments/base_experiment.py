@@ -58,9 +58,20 @@ def log_and_print_msg(first_line, verbose, verbose_level, **kwargs):
     if verbose >= verbose_level:
         current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         first_line = f"{current_time}\n{first_line}"
-        slurm_job_id = os.getenv("SLURM_JOB_ID", None)
-        if slurm_job_id is not None:
-            first_line = f"SLURM_JOB_ID: {slurm_job_id}\n{first_line}"
+        slurm_params = dict(
+            SLURM_JOB_ID=os.getenv("SLURM_JOB_ID", None),
+            SLURM_STEP_ID=os.getenv("SLURM_STEP_ID", None),
+            SLURM_ARRAY_JOB_ID=os.getenv("SLURM_ARRAY_JOB_ID", None),
+            SLURM_ARRAY_TASK_ID=os.getenv("SLURM_ARRAY_TASK_ID", None),
+            SLURM_LOCALID=os.getenv("SLURM_LOCALID", None),
+            SLURMD_NODENAME=os.getenv("SLURMD_NODENAME", None),
+        )
+        slurm_line = ''
+        for slurm_param, value in slurm_params.items():
+            if value is not None:
+                slurm_line += f"{slurm_param}: {value} "
+        if slurm_line != '':
+            first_line = f"{slurm_line}\n{first_line}"
         first_line = f"{first_line}\n"
         first_line += "".join([f"{key}: {value}\n" for key, value in kwargs.items()])
         print(first_line)
