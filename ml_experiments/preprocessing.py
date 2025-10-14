@@ -65,13 +65,17 @@ def reorder_columns(X, orderly_features_names):
     orderly_features_without_dropped = deepcopy(orderly_features_names)
     for feature in orderly_features_names:
         if feature not in X.columns:
+            possible_longer_features = [feat for feat in orderly_features_names if feat.startswith(f"{feature}_") and len(feat) > len(feature)]
             # feature could have be transformed by one-hot encoding, so it could be present in the format
-            # 'feature_name_i' where i is the index of the category
+            # feature + '_' + str(category)
             index_of_feature = orderly_features_without_dropped.index(feature)
             orderly_features_without_dropped.remove(feature)
-            # the regex ^{re.escape(feature)}_\d+$ matches exactly the format 'feature_i' where i is an integer
-            # obviously it was chatgpt that gave me, so if anything does not work as expected, check this line
-            one_hot_features = [col for col in X.columns if bool(re.match(rf"^{re.escape(feature)}_\d+$", col))]
+            one_hot_features = []
+            for col in X.columns:
+                if col.startswith(f"{feature}_"):
+                    col_comes_from_longer_feature = any(col.startswith(f"{longer_feature}_") for longer_feature in possible_longer_features)
+                    if not col_comes_from_longer_feature:
+                        one_hot_features.append(col)
             orderly_features_without_dropped[index_of_feature:index_of_feature] = one_hot_features
     return X[orderly_features_without_dropped]
 
@@ -340,4 +344,3 @@ def train_test_split_forced(train_data, train_target, test_size_pct, random_stat
                 train_data, train_target, test_size=test_size_pct, random_state=random_state, stratify=stratify
             )
     return X_train, X_valid, y_train, y_valid
-
