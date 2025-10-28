@@ -18,8 +18,9 @@ from sklearn.metrics import (
 )
 
 
-def get_metric_fn(metric, n_classes=None, pos_label=1):
-    labels = list(range(n_classes)) if n_classes is not None else None
+def get_metric_fn(metric, labels=None, n_classes=None, pos_label=1):
+    if labels is None:
+        labels = list(range(n_classes)) if n_classes is not None else None
     # map_metric_to_func[metric] = (function, need_proba, higher_is_better)
     auc_fn = partial(roc_auc_score, multi_class="ovr", labels=labels)
     auc_fn.__name__ = "auc"
