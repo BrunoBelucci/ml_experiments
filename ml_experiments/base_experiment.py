@@ -1248,10 +1248,13 @@ class BaseExperiment(ABC):
             log_and_print_msg("Run already exists on MLflow. Skipping...", verbose=self.verbose, verbose_level=2)
             if return_results:
                 possible_existent_run = possible_existent_run.to_dict()
+                existent_run_id = possible_existent_run["run_id"]
                 # finish run, set status, log metrics, params, tags
                 log_params = {param[len('params.'):]: value for param, value in possible_existent_run.items() if param.startswith('params.')}
                 log_metrics = {metric[len('metrics.'):]: value for metric, value in possible_existent_run.items() if metric.startswith('metrics.')}
                 log_tags = {tag[len('tags.'):]: value for tag, value in possible_existent_run.items() if tag.startswith('tags.')}
+                log_tags["existent_run_id"] = existent_run_id
+                
 
                 mlflow.log_params(log_params, run_id=mlflow_run_id)
                 mlflow.log_metrics(log_metrics, run_id=mlflow_run_id)
@@ -1259,7 +1262,7 @@ class BaseExperiment(ABC):
                 for tag, value in log_tags.items():
                     mlflow_client.set_tag(mlflow_run_id, tag, value)
                 mlflow_client.set_terminated(mlflow_run_id, status=possible_existent_run['status'])
-                return possible_existent_run.to_dict()
+                return possible_existent_run
             else:
                 return True
 
