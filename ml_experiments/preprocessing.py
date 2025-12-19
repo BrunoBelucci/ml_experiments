@@ -176,6 +176,8 @@ def create_data_preprocess_pipeline(
                 categorical_encoder = OrdinalEncoder()
         elif categorical_encoder == "one_hot":
             categorical_encoder = OneHotEncoder(drop="if_binary", sparse_output=False, handle_unknown="ignore")
+        elif categorical_encoder == "one_hot_10":
+            categorical_encoder = OneHotEncoder(drop="if_binary", sparse_output=False, handle_unknown="ignore", min_frequency=0.1, max_categories=10)
         elif isinstance(categorical_encoder, TransformerMixin):
             # If a custom transformer is provided, use it directly
             categorical_encoder = categorical_encoder
