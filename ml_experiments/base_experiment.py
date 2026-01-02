@@ -791,10 +791,10 @@ class BaseExperiment(ABC):
                     while new_param_name in existing_params.keys():
                         suffix += 1
                         new_param_name = f"{param}_change_{suffix}"
-                    mlflow.log_param(new_param_name, value, run_id=mlflow_run_id)
+                    mlflow_client.log_param(key=new_param_name, value=value, run_id=mlflow_run_id)
             else:
                 raise e
-                
+
         mlflow.log_metrics(log_metrics, run_id=mlflow_run_id)
         for tag, value in log_tags.items():
             mlflow_client.set_tag(mlflow_run_id, tag, value)
@@ -1279,7 +1279,6 @@ class BaseExperiment(ABC):
                 log_metrics = {metric[len('metrics.'):]: value for metric, value in possible_existent_run.items() if metric.startswith('metrics.')}
                 log_tags = {tag[len('tags.'):]: value for tag, value in possible_existent_run.items() if tag.startswith('tags.')}
                 log_tags["existent_run_id"] = existent_run_id
-                
 
                 mlflow.log_params(log_params, run_id=mlflow_run_id)
                 mlflow.log_metrics(log_metrics, run_id=mlflow_run_id)
