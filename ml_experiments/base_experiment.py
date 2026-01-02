@@ -769,7 +769,31 @@ class BaseExperiment(ABC):
                         model_params[param] = str(model_params[param])
             log_params.update(model_params)
 
-        mlflow.log_params(log_params, run_id=mlflow_run_id)
+        try:
+            mlflow.log_params(log_params, run_id=mlflow_run_id)
+        except mlflow.exceptions.MlflowException as e:
+            # check if the exception is due to Changing param values
+            if "Changing param values is not allowed." in str(e):
+                # we will log the parameter that is trying to be changed separately
+                existing_params = mlflow_client.get_run(mlflow_run_id).data.params
+                changing_params = {}
+                for param, value in log_params.items():
+                    if param in existing_params.keys() and existing_params[param] != value:
+                        changing_params[param] = value
+                        log_params.pop(param)
+                if log_params:
+                    mlflow.log_params(log_params, run_id=mlflow_run_id)
+                for param, value in changing_params.items():
+                    # check if there is already a suffix for this param
+                    suffix = 1
+                    new_param_name = f"{param}_change_{suffix}"
+                    while new_param_name in existing_params.keys():
+                        suffix += 1
+                        new_param_name = f"{param}_change_{suffix}"
+                    mlflow.log_param(new_param_name, value, run_id=mlflow_run_id)
+            else:
+                raise e
+                
         mlflow.log_metrics(log_metrics, run_id=mlflow_run_id)
         for tag, value in log_tags.items():
             mlflow_client.set_tag(mlflow_run_id, tag, value)
