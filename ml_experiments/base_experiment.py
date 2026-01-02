@@ -20,6 +20,7 @@ from func_timeout import func_timeout, FunctionTimedOut
 from itertools import product
 import hashlib
 from datetime import datetime
+from copy import deepcopy
 
 
 try:
@@ -777,7 +778,7 @@ class BaseExperiment(ABC):
                 # we will log the parameter that is trying to be changed separately
                 existing_params = mlflow_client.get_run(mlflow_run_id).data.params
                 changing_params = {}
-                for param, value in log_params.items():
+                for param, value in deepcopy(log_params).items():
                     if param in existing_params.keys() and existing_params[param] != value:
                         changing_params[param] = value
                         log_params.pop(param)
