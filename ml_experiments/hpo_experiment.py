@@ -9,6 +9,7 @@ from ml_experiments.base_experiment import BaseExperiment
 from ml_experiments.tuners import OptunaTuner, DaskOptunaTuner
 from ml_experiments.utils import flatten_any, profile_time, profile_memory
 from functools import partial
+import numpy as np
 
 
 class HPOExperiment(BaseExperiment, ABC):
@@ -158,10 +159,19 @@ class HPOExperiment(BaseExperiment, ABC):
             "It should handle the training of the model for a given trial."
         )
 
+    def _before_fit_model(
+        self, combination: dict, unique_params: dict, extra_params: dict, mlflow_run_id: str | None = None, **kwargs
+    ):
+        hpo_seed = unique_params["hpo_seed"]
+        ret = super()._before_fit_model(combination, unique_params, extra_params, mlflow_run_id, **kwargs)
+        random_generator = np.random.default_rng(hpo_seed)
+        ret["random_generator"] = random_generator
+        return ret
+
     def get_trial_fn(
-        self, 
+        self,
         study: Study,
-        search_space: dict, 
+        search_space: dict,
         combination: dict,
         unique_params: dict,
         extra_params: dict,
@@ -169,14 +179,17 @@ class HPOExperiment(BaseExperiment, ABC):
         child_runs_ids: Optional[list] = None,
         **kwargs,
     ) -> dict:
+        random_generator = kwargs["before_fit_model_return"]["random_generator"]
+        random_seed = int(random_generator.integers(0, 2**31 - 1))
         flatten_search_space = flatten_any(search_space)
         trial = study.ask(flatten_search_space)
         trial_number = trial.number
         trial_key = "_".join([str(value) for value in combination.values()])
         trial_key = trial_key + f"-{trial_number}"  # unique key (trial number)
         child_run_id = child_runs_ids[trial_number] if child_runs_ids else None
-        trial.set_user_attr('child_run_id', child_run_id)
-        return dict(trial=trial, trial_key=trial_key, child_run_id=child_run_id)
+        trial.set_user_attr("child_run_id", child_run_id)
+        trial.set_user_attr("random_seed", random_seed)
+        return dict(trial=trial, trial_key=trial_key, child_run_id=child_run_id, random_seed=random_seed)
 
     @abstractmethod
     def get_search_space(
@@ -195,6 +208,11 @@ class HPOExperiment(BaseExperiment, ABC):
             "The get_default_values method must be implemented in the subclass. "
             "It should return the default values for the hyperparameters."
         )
+    
+    def get_hyperband_max_resources(
+        self, combination: dict, unique_params: dict, extra_params: dict, mlflow_run_id: Optional[str] = None, **kwargs
+    ) -> Optional[int]:
+        return None
 
     @profile_time(enable_based_on_attribute="profile_time")
     @profile_memory(enable_based_on_attribute="profile_memory")
@@ -220,6 +238,9 @@ class HPOExperiment(BaseExperiment, ABC):
 
         search_space = self.get_search_space(combination, unique_params, extra_params, mlflow_run_id, **kwargs)
         default_values = self.get_default_values(combination, unique_params, extra_params, mlflow_run_id, **kwargs)
+        hyperband_max_resources = self.get_hyperband_max_resources(
+            combination, unique_params, extra_params, mlflow_run_id, **kwargs
+        )
         get_trial_fn = partial(
             self.get_trial_fn,
             search_space=search_space,
@@ -238,6 +259,7 @@ class HPOExperiment(BaseExperiment, ABC):
             metric=self.hpo_metric,
             enqueue_configurations=default_values,
             get_trial_fn=get_trial_fn,
+            hyperband_max_resources=hyperband_max_resources,
             combination=combination,
             unique_params=unique_params,
             extra_params=extra_params,
