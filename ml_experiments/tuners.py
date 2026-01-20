@@ -351,17 +351,17 @@ class DaskOptunaTuner(OptunaTuner):
         if self.dask_client is None:
             client = get_client()
             return self.run_concurrent_trials(
-                client, training_fn, search_space, get_trial_fn, max_trials_to_run,**kwargs
+                client, training_fn=training_fn, search_space=search_space, get_trial_fn=get_trial_fn, max_trials_to_run=max_trials_to_run, **kwargs
             )
         elif isinstance(self.dask_client, Client):
             client = self.dask_client
             return self.run_concurrent_trials(
-                client, training_fn, search_space, get_trial_fn, max_trials_to_run, **kwargs
+                client, training_fn=training_fn, search_space=search_space, get_trial_fn=get_trial_fn, max_trials_to_run=max_trials_to_run, **kwargs
             )
         elif self.dask_client == 'worker_client':
             with worker_client() as client:
                 return self.run_concurrent_trials(
-                    client, training_fn, search_space, get_trial_fn, max_trials_to_run, **kwargs
+                    client, training_fn=training_fn, search_space=search_space, get_trial_fn=get_trial_fn, max_trials_to_run=max_trials_to_run, **kwargs
                 )
         else:
             raise ValueError(f'Invalid dask client type: {type(self.dask_client)}')

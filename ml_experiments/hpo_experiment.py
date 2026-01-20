@@ -147,7 +147,7 @@ class HPOExperiment(BaseExperiment, ABC):
     @abstractmethod
     def training_fn(
         self,
-        trial_dict: dict,
+        trial: dict,  # should be the variable returned by get_trial_fn
         combination: dict,
         unique_params: dict,
         extra_params: dict,
